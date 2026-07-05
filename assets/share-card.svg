@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="房仲精靈分享預覽圖">
+  <defs>
+    <linearGradient id="sky" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#203555"/>
+      <stop offset="0.58" stop-color="#247f96"/>
+      <stop offset="1" stop-color="#16845a"/>
+    </linearGradient>
+    <linearGradient id="pet" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#50a37b"/>
+      <stop offset="1" stop-color="#f0c866"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#sky)"/>
+  <path d="M0 468 C170 408 272 514 432 450 C610 378 710 454 884 386 C1014 336 1098 370 1200 310 V630 H0 Z" fill="#f7f1e8" opacity=".94"/>
+  <path d="M90 470 H260 V338 H90 Z M330 470 H500 V282 H330 Z M570 470 H740 V330 H570 Z" fill="#ffffff" opacity=".18"/>
+  <path d="M138 384 H176 M138 424 H176 M378 330 H420 M378 374 H420 M620 374 H660 M620 416 H660" stroke="#ffffff" stroke-width="16" opacity=".44" stroke-linecap="round"/>
+  <path d="M676 230 C735 120 874 140 912 250 C952 366 878 474 752 456 C652 442 619 334 676 230 Z" fill="url(#pet)" stroke="#18202d" stroke-width="20"/>
+  <path d="M698 202 C648 124 718 92 744 176 Z" fill="#f0c866" stroke="#18202d" stroke-width="16"/>
+  <path d="M886 202 C942 124 872 92 842 176 Z" fill="#f0c866" stroke="#18202d" stroke-width="16"/>
+  <circle cx="746" cy="260" r="22" fill="#18202d"/>
+  <circle cx="834" cy="260" r="22" fill="#18202d"/>
+  <circle cx="755" cy="252" r="7" fill="#ffffff"/>
+  <circle cx="843" cy="252" r="7" fill="#ffffff"/>
+  <path d="M748 326 Q792 360 836 326" fill="none" stroke="#18202d" stroke-width="18" stroke-linecap="round"/>
+  <path d="M706 382 C748 408 840 406 882 378" fill="none" stroke="#18202d" stroke-width="20" stroke-linecap="round" opacity=".72"/>
+  <path d="M735 384 L790 414 L842 382" fill="none" stroke="#f0c866" stroke-width="12" stroke-linecap="round"/>
+  <path d="M936 168 L956 214 L1006 222 L970 254 L980 304 L936 278 L892 304 L902 254 L866 222 L916 214 Z" fill="#f0c866" stroke="#18202d" stroke-width="10" stroke-linejoin="round"/>
+  <text x="88" y="184" fill="#ffffff" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans TC','Segoe UI',sans-serif" font-size="78" font-weight="800">房仲精靈</text>
+  <text x="92" y="262" fill="#ffffff" opacity=".92" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans TC','Segoe UI',sans-serif" font-size="34" font-weight="700">行程升級寵物，成果覺醒稀有夥伴</text>
+  <text x="92" y="326" fill="#f0c866" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans TC','Segoe UI',sans-serif" font-size="30" font-weight="800">抽卡 · 卡片庫 · 團隊任務 · 究極合成</text>
+</svg>

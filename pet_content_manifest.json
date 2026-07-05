@@ -1,0 +1,1748 @@
+{
+  "generated_from": "public-runtime-manifest",
+  "generated_at": "2026-07-04T07:10:49.048Z",
+  "storylines": [
+    {
+      "storyline_id": "sl_area_star_map",
+      "name": "商圈星圖"
+    },
+    {
+      "storyline_id": "sl_development_expedition",
+      "name": "開發遠征隊"
+    },
+    {
+      "storyline_id": "sl_call_signal_tower",
+      "name": "電話信號塔"
+    },
+    {
+      "storyline_id": "sl_negotiation_forge",
+      "name": "議價鍛造屋"
+    },
+    {
+      "storyline_id": "sl_showing_route",
+      "name": "帶看小旅行"
+    },
+    {
+      "storyline_id": "sl_listing_seed_garden",
+      "name": "委託種子園"
+    },
+    {
+      "storyline_id": "sl_offer_maze",
+      "name": "斡旋迷宮"
+    },
+    {
+      "storyline_id": "sl_contract_team_sanctum",
+      "name": "成交神殿"
+    }
+  ],
+  "pets": [
+    {
+      "pet_id": "pet_area_001",
+      "storyline_id": "sl_area_star_map",
+      "name": "巷光犬",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "AREA_ACTIVITY"
+      ],
+      "required_awaken_materials": [
+        "星圖碎片",
+        "商圈記憶光"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "商圈線經驗小幅提升，適合每天點亮地圖的入門寵物。",
+      "image_url": "assets/pets/pet_area_001.webp",
+      "thumbnail_url": "assets/pets/pet_area_001-thumb.webp",
+      "line_title": "抽到巷光犬",
+      "line_subtitle": "今天的商圈地圖亮起第一顆星。",
+      "palette": [
+        "#50a37b",
+        "#f0c866",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_area_002",
+      "storyline_id": "sl_area_star_map",
+      "name": "門牌雀",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "AREA_ACTIVITY"
+      ],
+      "required_awaken_materials": [
+        "星圖碎片",
+        "商圈記憶光"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "每次商圈活動有機會追加少量星圖碎片。",
+      "image_url": "assets/pets/pet_area_002.webp",
+      "thumbnail_url": "assets/pets/pet_area_002-thumb.webp",
+      "line_title": "抽到門牌雀",
+      "line_subtitle": "它記得每條巷子的第一個線索。",
+      "palette": [
+        "#50a37b",
+        "#f0c866",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_area_003",
+      "storyline_id": "sl_area_star_map",
+      "name": "社區鈴貓",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "AREA_ACTIVITY"
+      ],
+      "required_awaken_materials": [
+        "星圖碎片",
+        "商圈記憶光"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "商圈活動達標時，提升故事線碎片掉落量。",
+      "image_url": "assets/pets/pet_area_003.webp",
+      "thumbnail_url": "assets/pets/pet_area_003-thumb.webp",
+      "line_title": "抽到社區鈴貓",
+      "line_subtitle": "它聽得見社區裡細小但重要的聲音。",
+      "palette": [
+        "#50a37b",
+        "#f0c866",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_area_004",
+      "storyline_id": "sl_area_star_map",
+      "name": "地標鹿",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "AREA_ACTIVITY"
+      ],
+      "required_awaken_materials": [
+        "星圖碎片",
+        "商圈記憶光"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "商圈線寵物升等時，有機會返還少量經驗。",
+      "image_url": "assets/pets/pet_area_004.webp",
+      "thumbnail_url": "assets/pets/pet_area_004-thumb.webp",
+      "line_title": "抽到地標鹿",
+      "line_subtitle": "它會把熟悉的地標變成你的路標。",
+      "palette": [
+        "#50a37b",
+        "#f0c866",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_area_005",
+      "storyline_id": "sl_area_star_map",
+      "name": "情報狐",
+      "rarity": "SR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "AREA_ACTIVITY"
+      ],
+      "required_awaken_materials": [
+        "星圖碎片",
+        "商圈記憶光",
+        "委託印記"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "商圈活動連續達標時，提升強化行程券取得機率。",
+      "image_url": "assets/pets/pet_area_005.webp",
+      "thumbnail_url": "assets/pets/pet_area_005-thumb.webp",
+      "line_title": "抽到情報狐",
+      "line_subtitle": "它把零散線索整理成可前進的方向。",
+      "palette": [
+        "#50a37b",
+        "#f0c866",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_area_006",
+      "storyline_id": "sl_area_star_map",
+      "name": "星圖守護龍",
+      "rarity": "SSR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型",
+        "究極型"
+      ],
+      "is_storyline_ultra_rare": true,
+      "can_be_drawn": true,
+      "can_be_ultimate": true,
+      "work_behavior_tags": [
+        "AREA_ACTIVITY"
+      ],
+      "required_awaken_materials": [
+        "星圖碎片",
+        "商圈記憶光",
+        "委託印記"
+      ],
+      "required_ultimate_materials": [
+        "同名碎片 x300",
+        "星圖碎片 x500",
+        "簽約核心 x1"
+      ],
+      "card_effect_summary": "商圈線核心 SSR；商圈任務達標時大幅提升星圖碎片與商圈線經驗。",
+      "image_url": "assets/pets/pet_area_006.webp",
+      "thumbnail_url": "assets/pets/pet_area_006-thumb.webp",
+      "line_title": "SSR 星圖守護龍",
+      "line_subtitle": "商圈星圖完成時，守護核心正式現身。",
+      "palette": [
+        "#50a37b",
+        "#f0c866",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_dev_001",
+      "storyline_id": "sl_development_expedition",
+      "name": "敲門兔",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "DEVELOPMENT"
+      ],
+      "required_awaken_materials": [
+        "遠征徽章",
+        "開發火種"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "開發線經驗小幅提升，適合新手累積拜訪感。",
+      "image_url": "assets/pets/pet_dev_001.webp",
+      "thumbnail_url": "assets/pets/pet_dev_001-thumb.webp",
+      "line_title": "抽到敲門兔",
+      "line_subtitle": "第一次出發，先把門輕輕敲開。",
+      "palette": [
+        "#d45f45",
+        "#f2a65a",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_dev_002",
+      "storyline_id": "sl_development_expedition",
+      "name": "名單鼬",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "DEVELOPMENT"
+      ],
+      "required_awaken_materials": [
+        "遠征徽章",
+        "開發火種"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "B 開發任務完成時，有機會追加開發線碎片。",
+      "image_url": "assets/pets/pet_dev_002.webp",
+      "thumbnail_url": "assets/pets/pet_dev_002-thumb.webp",
+      "line_title": "抽到名單鼬",
+      "line_subtitle": "它會把下一個可能性好好收進名單。",
+      "palette": [
+        "#d45f45",
+        "#f2a65a",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_dev_003",
+      "storyline_id": "sl_development_expedition",
+      "name": "拜訪熊",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "DEVELOPMENT"
+      ],
+      "required_awaken_materials": [
+        "遠征徽章",
+        "開發火種"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "連續開發達標時，提高強化行程券取得機率。",
+      "image_url": "assets/pets/pet_dev_003.webp",
+      "thumbnail_url": "assets/pets/pet_dev_003-thumb.webp",
+      "line_title": "抽到拜訪熊",
+      "line_subtitle": "它走得慢，但每一步都很穩。",
+      "palette": [
+        "#d45f45",
+        "#f2a65a",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_dev_004",
+      "storyline_id": "sl_development_expedition",
+      "name": "路線鷹",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "DEVELOPMENT"
+      ],
+      "required_awaken_materials": [
+        "遠征徽章",
+        "開發火種"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "開發任務完成後，少量提升遠征徽章掉落。",
+      "image_url": "assets/pets/pet_dev_004.webp",
+      "thumbnail_url": "assets/pets/pet_dev_004-thumb.webp",
+      "line_title": "抽到路線鷹",
+      "line_subtitle": "它會先看見下一條值得走的路。",
+      "palette": [
+        "#d45f45",
+        "#f2a65a",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_dev_005",
+      "storyline_id": "sl_development_expedition",
+      "name": "開拓狼",
+      "rarity": "SR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "DEVELOPMENT"
+      ],
+      "required_awaken_materials": [
+        "遠征徽章",
+        "開發火種",
+        "委託印記"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "B 開發與電話量同日達標時，額外提供開發線碎片。",
+      "image_url": "assets/pets/pet_dev_005.webp",
+      "thumbnail_url": "assets/pets/pet_dev_005-thumb.webp",
+      "line_title": "抽到開拓狼",
+      "line_subtitle": "它不是亂衝，是替你找出方向。",
+      "palette": [
+        "#d45f45",
+        "#f2a65a",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_dev_006",
+      "storyline_id": "sl_development_expedition",
+      "name": "開發雲龍",
+      "rarity": "SSR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型",
+        "究極型"
+      ],
+      "is_storyline_ultra_rare": true,
+      "can_be_drawn": true,
+      "can_be_ultimate": true,
+      "work_behavior_tags": [
+        "DEVELOPMENT"
+      ],
+      "required_awaken_materials": [
+        "遠征徽章",
+        "開發火種",
+        "委託印記"
+      ],
+      "required_ultimate_materials": [
+        "同名碎片 x300",
+        "遠征徽章 x500",
+        "簽約核心 x1"
+      ],
+      "card_effect_summary": "開發線核心 SSR；開發任務達標時大幅提升開發線經驗與碎片。",
+      "image_url": "assets/pets/pet_dev_006.webp",
+      "thumbnail_url": "assets/pets/pet_dev_006-thumb.webp",
+      "line_title": "SSR 開發雲龍",
+      "line_subtitle": "遠征累積到盡頭時，雲路會自己打開。",
+      "palette": [
+        "#d45f45",
+        "#f2a65a",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_call_001",
+      "storyline_id": "sl_call_signal_tower",
+      "name": "撥號鼠",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "CALL_COUNT"
+      ],
+      "required_awaken_materials": [
+        "信號晶片",
+        "回訪回聲"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "電話量達標時，增加少量信號塔經驗。",
+      "image_url": "assets/pets/pet_call_001.webp",
+      "thumbnail_url": "assets/pets/pet_call_001-thumb.webp",
+      "line_title": "抽到撥號鼠",
+      "line_subtitle": "每一通電話，都先變成一點小小信號。",
+      "palette": [
+        "#247f96",
+        "#9fd6df",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_call_002",
+      "storyline_id": "sl_call_signal_tower",
+      "name": "回聲蛙",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "CALL_COUNT"
+      ],
+      "required_awaken_materials": [
+        "信號晶片",
+        "回訪回聲"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "電話量任務完成時，有機會取得回訪回聲。",
+      "image_url": "assets/pets/pet_call_002.webp",
+      "thumbnail_url": "assets/pets/pet_call_002-thumb.webp",
+      "line_title": "抽到回聲蛙",
+      "line_subtitle": "它會把沒有結果的回音收好，下次再用。",
+      "palette": [
+        "#247f96",
+        "#9fd6df",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_call_003",
+      "storyline_id": "sl_call_signal_tower",
+      "name": "約訪鴿鐘",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "CALL_COUNT",
+        "CLIENT_MEETING"
+      ],
+      "required_awaken_materials": [
+        "信號晶片",
+        "回訪回聲",
+        "見面談微光"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "電話量與見面談同日出現時，額外提供信號晶片。",
+      "image_url": "assets/pets/pet_call_003.webp",
+      "thumbnail_url": "assets/pets/pet_call_003-thumb.webp",
+      "line_title": "抽到約訪鴿鐘",
+      "line_subtitle": "它把一通電話變成下一次見面的時間。",
+      "palette": [
+        "#247f96",
+        "#9fd6df",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_call_004",
+      "storyline_id": "sl_call_signal_tower",
+      "name": "訊號貓頭鷹",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "CALL_COUNT"
+      ],
+      "required_awaken_materials": [
+        "信號晶片",
+        "回訪回聲"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "電話量連續達標時，提升一般行程券轉強化券的機率。",
+      "image_url": "assets/pets/pet_call_004.webp",
+      "thumbnail_url": "assets/pets/pet_call_004-thumb.webp",
+      "line_title": "抽到訊號貓頭鷹",
+      "line_subtitle": "它會在雜訊裡聽出真正重要的訊號。",
+      "palette": [
+        "#247f96",
+        "#9fd6df",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_call_005",
+      "storyline_id": "sl_call_signal_tower",
+      "name": "連線豹",
+      "rarity": "SR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "CALL_COUNT",
+        "DEVELOPMENT"
+      ],
+      "required_awaken_materials": [
+        "信號晶片",
+        "回訪回聲",
+        "開發火種"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "電話量與 B 開發同日達標時，給予額外強化行程券進度。",
+      "image_url": "assets/pets/pet_call_005.webp",
+      "thumbnail_url": "assets/pets/pet_call_005-thumb.webp",
+      "line_title": "抽到連線豹",
+      "line_subtitle": "它讓今天的電話不只是數字，而是路線。",
+      "palette": [
+        "#247f96",
+        "#9fd6df",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_call_006",
+      "storyline_id": "sl_call_signal_tower",
+      "name": "回聲天狐",
+      "rarity": "SSR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型",
+        "究極型"
+      ],
+      "is_storyline_ultra_rare": true,
+      "can_be_drawn": true,
+      "can_be_ultimate": true,
+      "work_behavior_tags": [
+        "CALL_COUNT"
+      ],
+      "required_awaken_materials": [
+        "信號晶片",
+        "回訪回聲",
+        "斡旋火花"
+      ],
+      "required_ultimate_materials": [
+        "同名碎片 x300",
+        "信號晶片 x500",
+        "簽約核心 x1"
+      ],
+      "card_effect_summary": "電話線核心 SSR；電話量達標時大幅提升信號晶片與回訪回聲取得量。",
+      "image_url": "assets/pets/pet_call_006.webp",
+      "thumbnail_url": "assets/pets/pet_call_006-thumb.webp",
+      "line_title": "SSR 回聲天狐",
+      "line_subtitle": "當回聲累積夠久，它會替你找到真正的連結。",
+      "palette": [
+        "#247f96",
+        "#9fd6df",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_neg_001",
+      "storyline_id": "sl_negotiation_forge",
+      "name": "算盤龜",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "NEGOTIATION"
+      ],
+      "required_awaken_materials": [
+        "價格星鐵",
+        "議價火花"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "議價線經驗小幅提升，幫助價格任務穩定累積。",
+      "image_url": "assets/pets/pet_neg_001.webp",
+      "thumbnail_url": "assets/pets/pet_neg_001-thumb.webp",
+      "line_title": "抽到算盤龜",
+      "line_subtitle": "它慢慢算，但每一步都站得住。",
+      "palette": [
+        "#6657a6",
+        "#b88217",
+        "#263447"
+      ]
+    },
+    {
+      "pet_id": "pet_neg_002",
+      "storyline_id": "sl_negotiation_forge",
+      "name": "價格狸",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "NEGOTIATION",
+        "PRICE_REVISION"
+      ],
+      "required_awaken_materials": [
+        "價格星鐵",
+        "議價火花"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "改附表事件出現時，少量增加價格星鐵。",
+      "image_url": "assets/pets/pet_neg_002.webp",
+      "thumbnail_url": "assets/pets/pet_neg_002-thumb.webp",
+      "line_title": "抽到價格狸",
+      "line_subtitle": "它把價格變動變成可以理解的節奏。",
+      "palette": [
+        "#6657a6",
+        "#b88217",
+        "#263447"
+      ]
+    },
+    {
+      "pet_id": "pet_neg_003",
+      "storyline_id": "sl_negotiation_forge",
+      "name": "附表蛇",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "PRICE_REVISION"
+      ],
+      "required_awaken_materials": [
+        "價格星鐵",
+        "議價火花"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "改附表後，提升議價線碎片與成果券進度。",
+      "image_url": "assets/pets/pet_neg_003.webp",
+      "thumbnail_url": "assets/pets/pet_neg_003-thumb.webp",
+      "line_title": "抽到附表蛇",
+      "line_subtitle": "它讓每次調整都有脈絡，而不是壓力。",
+      "palette": [
+        "#6657a6",
+        "#b88217",
+        "#263447"
+      ]
+    },
+    {
+      "pet_id": "pet_neg_004",
+      "storyline_id": "sl_negotiation_forge",
+      "name": "折衝虎",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "NEGOTIATION"
+      ],
+      "required_awaken_materials": [
+        "價格星鐵",
+        "議價火花"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "C 議價達標時，有機會取得額外議價火花。",
+      "image_url": "assets/pets/pet_neg_004.webp",
+      "thumbnail_url": "assets/pets/pet_neg_004-thumb.webp",
+      "line_title": "抽到折衝虎",
+      "line_subtitle": "它不是硬碰硬，而是守住平衡點。",
+      "palette": [
+        "#6657a6",
+        "#b88217",
+        "#263447"
+      ]
+    },
+    {
+      "pet_id": "pet_neg_005",
+      "storyline_id": "sl_negotiation_forge",
+      "name": "條件獅",
+      "rarity": "SR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "NEGOTIATION",
+        "OFFER_RECEIVED"
+      ],
+      "required_awaken_materials": [
+        "價格星鐵",
+        "議價火花",
+        "紅線結晶"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "議價與斡旋事件連動時，額外提供成果券進度。",
+      "image_url": "assets/pets/pet_neg_005.webp",
+      "thumbnail_url": "assets/pets/pet_neg_005-thumb.webp",
+      "line_title": "抽到條件獅",
+      "line_subtitle": "它把條件整理好，讓對話更靠近出口。",
+      "palette": [
+        "#6657a6",
+        "#b88217",
+        "#263447"
+      ]
+    },
+    {
+      "pet_id": "pet_neg_006",
+      "storyline_id": "sl_negotiation_forge",
+      "name": "議價鳳凰",
+      "rarity": "SSR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型",
+        "究極型"
+      ],
+      "is_storyline_ultra_rare": true,
+      "can_be_drawn": true,
+      "can_be_ultimate": true,
+      "work_behavior_tags": [
+        "NEGOTIATION",
+        "PRICE_REVISION"
+      ],
+      "required_awaken_materials": [
+        "價格星鐵",
+        "議價火花",
+        "簽約核心"
+      ],
+      "required_ultimate_materials": [
+        "同名碎片 x300",
+        "價格星鐵 x500",
+        "簽約核心 x1"
+      ],
+      "card_effect_summary": "議價線核心 SSR；議價與改附表事件可大幅提升價格星鐵取得。",
+      "image_url": "assets/pets/pet_neg_006.webp",
+      "thumbnail_url": "assets/pets/pet_neg_006-thumb.webp",
+      "line_title": "SSR 議價鳳凰",
+      "line_subtitle": "價格被打磨到位時，火光會重新升起。",
+      "palette": [
+        "#6657a6",
+        "#b88217",
+        "#263447"
+      ]
+    },
+    {
+      "pet_id": "pet_show_001",
+      "storyline_id": "sl_showing_route",
+      "name": "導覽鴨",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "SHOWING"
+      ],
+      "required_awaken_materials": [
+        "導覽羽毛",
+        "見面談微光"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "帶看線經驗小幅提升，讓帶看行程更有成長感。",
+      "image_url": "assets/pets/pet_show_001.webp",
+      "thumbnail_url": "assets/pets/pet_show_001-thumb.webp",
+      "line_title": "抽到導覽鴨",
+      "line_subtitle": "它會把第一段帶看路線走得很安心。",
+      "palette": [
+        "#247f96",
+        "#f7df8a",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_show_002",
+      "storyline_id": "sl_showing_route",
+      "name": "採光雀",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "SHOWING"
+      ],
+      "required_awaken_materials": [
+        "導覽羽毛",
+        "見面談微光"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "帶看任務完成時，有機會追加導覽羽毛。",
+      "image_url": "assets/pets/pet_show_002.webp",
+      "thumbnail_url": "assets/pets/pet_show_002-thumb.webp",
+      "line_title": "抽到採光雀",
+      "line_subtitle": "它讓房子的光線被好好看見。",
+      "palette": [
+        "#247f96",
+        "#f7df8a",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_show_003",
+      "storyline_id": "sl_showing_route",
+      "name": "格局象",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "SHOWING"
+      ],
+      "required_awaken_materials": [
+        "導覽羽毛",
+        "見面談微光"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "D 帶看達標時，提升帶看線碎片取得量。",
+      "image_url": "assets/pets/pet_show_003.webp",
+      "thumbnail_url": "assets/pets/pet_show_003-thumb.webp",
+      "line_title": "抽到格局象",
+      "line_subtitle": "它會把空間感穩穩地說清楚。",
+      "palette": [
+        "#247f96",
+        "#f7df8a",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_show_004",
+      "storyline_id": "sl_showing_route",
+      "name": "動線豹",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "SHOWING",
+        "CLIENT_MEETING"
+      ],
+      "required_awaken_materials": [
+        "導覽羽毛",
+        "見面談微光"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "帶看與見面談同日出現時，額外提供見面談微光。",
+      "image_url": "assets/pets/pet_show_004.webp",
+      "thumbnail_url": "assets/pets/pet_show_004-thumb.webp",
+      "line_title": "抽到動線豹",
+      "line_subtitle": "它讓客戶走進房子時，也走進想像。",
+      "palette": [
+        "#247f96",
+        "#f7df8a",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_show_005",
+      "storyline_id": "sl_showing_route",
+      "name": "安心羊",
+      "rarity": "SR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "SHOWING",
+        "CLIENT_MEETING"
+      ],
+      "required_awaken_materials": [
+        "導覽羽毛",
+        "見面談微光",
+        "委託印記"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "見面談事件出現時，提高成果券進度並追加帶看線經驗。",
+      "image_url": "assets/pets/pet_show_005.webp",
+      "thumbnail_url": "assets/pets/pet_show_005-thumb.webp",
+      "line_title": "抽到安心羊",
+      "line_subtitle": "它讓見面談的氣氛更穩、更安心。",
+      "palette": [
+        "#247f96",
+        "#f7df8a",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_show_006",
+      "storyline_id": "sl_showing_route",
+      "name": "帶看天馬",
+      "rarity": "SSR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型",
+        "究極型"
+      ],
+      "is_storyline_ultra_rare": true,
+      "can_be_drawn": true,
+      "can_be_ultimate": true,
+      "work_behavior_tags": [
+        "SHOWING",
+        "CLIENT_MEETING"
+      ],
+      "required_awaken_materials": [
+        "導覽羽毛",
+        "見面談微光",
+        "簽約核心"
+      ],
+      "required_ultimate_materials": [
+        "同名碎片 x300",
+        "導覽羽毛 x500",
+        "簽約核心 x1"
+      ],
+      "card_effect_summary": "帶看線核心 SSR；帶看與見面談任務可大幅提升導覽羽毛與見面談微光。",
+      "image_url": "assets/pets/pet_show_006.webp",
+      "thumbnail_url": "assets/pets/pet_show_006-thumb.webp",
+      "line_title": "SSR 帶看天馬",
+      "line_subtitle": "它會把帶看路線變成一趟值得期待的旅程。",
+      "palette": [
+        "#247f96",
+        "#f7df8a",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_listing_001",
+      "storyline_id": "sl_listing_seed_garden",
+      "name": "信任貓",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "LISTING_SIGNED"
+      ],
+      "required_awaken_materials": [
+        "信任種子",
+        "委託印記"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "委託事件出現時，提供少量委託線經驗。",
+      "image_url": "assets/pets/pet_listing_001.webp",
+      "thumbnail_url": "assets/pets/pet_listing_001-thumb.webp",
+      "line_title": "抽到信任貓",
+      "line_subtitle": "一份委託，先從一顆信任種子開始。",
+      "palette": [
+        "#16845a",
+        "#f6d365",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_listing_002",
+      "storyline_id": "sl_listing_seed_garden",
+      "name": "資料蜂",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "LISTING_SIGNED"
+      ],
+      "required_awaken_materials": [
+        "信任種子",
+        "委託印記"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "委託後有機會追加信任種子。",
+      "image_url": "assets/pets/pet_listing_002.webp",
+      "thumbnail_url": "assets/pets/pet_listing_002-thumb.webp",
+      "line_title": "抽到資料蜂",
+      "line_subtitle": "它把資料整理好，讓信任長得更穩。",
+      "palette": [
+        "#16845a",
+        "#f6d365",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_listing_003",
+      "storyline_id": "sl_listing_seed_garden",
+      "name": "鑰匙兔",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "LISTING_SIGNED"
+      ],
+      "required_awaken_materials": [
+        "信任種子",
+        "委託印記"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "委託素材取得時，提升委託線碎片掉落。",
+      "image_url": "assets/pets/pet_listing_003.webp",
+      "thumbnail_url": "assets/pets/pet_listing_003-thumb.webp",
+      "line_title": "抽到鑰匙兔",
+      "line_subtitle": "它守著的是鑰匙，也是屋主交出的信任。",
+      "palette": [
+        "#16845a",
+        "#f6d365",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_listing_004",
+      "storyline_id": "sl_listing_seed_garden",
+      "name": "屋主鹿",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "LISTING_SIGNED",
+        "AREA_ACTIVITY"
+      ],
+      "required_awaken_materials": [
+        "信任種子",
+        "委託印記",
+        "商圈記憶光"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "商圈活動後取得委託時，額外增加委託印記。",
+      "image_url": "assets/pets/pet_listing_004.webp",
+      "thumbnail_url": "assets/pets/pet_listing_004-thumb.webp",
+      "line_title": "抽到屋主鹿",
+      "line_subtitle": "它代表屋主願意把期待交給你照顧。",
+      "palette": [
+        "#16845a",
+        "#f6d365",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_listing_005",
+      "storyline_id": "sl_listing_seed_garden",
+      "name": "委託樹精",
+      "rarity": "SR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "LISTING_SIGNED"
+      ],
+      "required_awaken_materials": [
+        "信任種子",
+        "委託印記",
+        "見面談微光"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "委託事件可額外提供成果券進度，並提升委託線經驗。",
+      "image_url": "assets/pets/pet_listing_005.webp",
+      "thumbnail_url": "assets/pets/pet_listing_005-thumb.webp",
+      "line_title": "抽到委託樹精",
+      "line_subtitle": "信任被好好照顧後，會慢慢長成機會。",
+      "palette": [
+        "#16845a",
+        "#f6d365",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_listing_006",
+      "storyline_id": "sl_listing_seed_garden",
+      "name": "契約麒麟",
+      "rarity": "SSR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型",
+        "究極型"
+      ],
+      "is_storyline_ultra_rare": true,
+      "can_be_drawn": true,
+      "can_be_ultimate": true,
+      "work_behavior_tags": [
+        "LISTING_SIGNED"
+      ],
+      "required_awaken_materials": [
+        "信任種子",
+        "委託印記",
+        "簽約核心"
+      ],
+      "required_ultimate_materials": [
+        "同名碎片 x300",
+        "信任種子 x500",
+        "簽約核心 x1"
+      ],
+      "card_effect_summary": "委託線核心 SSR；委託事件可大幅提升委託印記與成果券進度。",
+      "image_url": "assets/pets/pet_listing_006.webp",
+      "thumbnail_url": "assets/pets/pet_listing_006-thumb.webp",
+      "line_title": "SSR 契約麒麟",
+      "line_subtitle": "當信任開花，契約的守護者就會出現。",
+      "palette": [
+        "#16845a",
+        "#f6d365",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_offer_001",
+      "storyline_id": "sl_offer_maze",
+      "name": "紅線狐",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "OFFER_RECEIVED"
+      ],
+      "required_awaken_materials": [
+        "紅線結晶",
+        "斡旋火花"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "斡旋事件出現時，提供少量斡旋線經驗。",
+      "image_url": "assets/pets/pet_offer_001.webp",
+      "thumbnail_url": "assets/pets/pet_offer_001-thumb.webp",
+      "line_title": "抽到紅線狐",
+      "line_subtitle": "它把買方與賣方之間的線輕輕牽起。",
+      "palette": [
+        "#c2415d",
+        "#f0c866",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_offer_002",
+      "storyline_id": "sl_offer_maze",
+      "name": "條件蟹",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "OFFER_RECEIVED"
+      ],
+      "required_awaken_materials": [
+        "紅線結晶",
+        "斡旋火花"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "收到斡旋時，有機會追加紅線結晶。",
+      "image_url": "assets/pets/pet_offer_002.webp",
+      "thumbnail_url": "assets/pets/pet_offer_002-thumb.webp",
+      "line_title": "抽到條件蟹",
+      "line_subtitle": "它把條件一個一個夾好，不讓對話散掉。",
+      "palette": [
+        "#c2415d",
+        "#f0c866",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_offer_003",
+      "storyline_id": "sl_offer_maze",
+      "name": "出價狼",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "OFFER_RECEIVED",
+        "NEGOTIATION"
+      ],
+      "required_awaken_materials": [
+        "紅線結晶",
+        "斡旋火花",
+        "價格星鐵"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "斡旋與議價連動時，提升斡旋火花取得量。",
+      "image_url": "assets/pets/pet_offer_003.webp",
+      "thumbnail_url": "assets/pets/pet_offer_003-thumb.webp",
+      "line_title": "抽到出價狼",
+      "line_subtitle": "它讓出價成為可以討論的起點。",
+      "palette": [
+        "#c2415d",
+        "#f0c866",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_offer_004",
+      "storyline_id": "sl_offer_maze",
+      "name": "溝通鸚鵡",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "OFFER_RECEIVED",
+        "CALL_COUNT"
+      ],
+      "required_awaken_materials": [
+        "紅線結晶",
+        "斡旋火花",
+        "回訪回聲"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "斡旋後有電話追蹤時，額外提供回訪回聲與斡旋線碎片。",
+      "image_url": "assets/pets/pet_offer_004.webp",
+      "thumbnail_url": "assets/pets/pet_offer_004-thumb.webp",
+      "line_title": "抽到溝通鸚鵡",
+      "line_subtitle": "它會把難說的話整理得更清楚。",
+      "palette": [
+        "#c2415d",
+        "#f0c866",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_offer_005",
+      "storyline_id": "sl_offer_maze",
+      "name": "突破牛",
+      "rarity": "SR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "OFFER_RECEIVED"
+      ],
+      "required_awaken_materials": [
+        "紅線結晶",
+        "斡旋火花",
+        "簽約核心"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "斡旋事件可提高成果券進度，並提升紅線結晶取得量。",
+      "image_url": "assets/pets/pet_offer_005.webp",
+      "thumbnail_url": "assets/pets/pet_offer_005-thumb.webp",
+      "line_title": "抽到突破牛",
+      "line_subtitle": "它不是硬撞，而是找到可以前進的缺口。",
+      "palette": [
+        "#c2415d",
+        "#f0c866",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_offer_006",
+      "storyline_id": "sl_offer_maze",
+      "name": "斡旋星龍",
+      "rarity": "SSR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型",
+        "究極型"
+      ],
+      "is_storyline_ultra_rare": true,
+      "can_be_drawn": true,
+      "can_be_ultimate": true,
+      "work_behavior_tags": [
+        "OFFER_RECEIVED"
+      ],
+      "required_awaken_materials": [
+        "紅線結晶",
+        "斡旋火花",
+        "簽約核心"
+      ],
+      "required_ultimate_materials": [
+        "同名碎片 x300",
+        "紅線結晶 x500",
+        "簽約核心 x1"
+      ],
+      "card_effect_summary": "斡旋線核心 SSR；收到斡旋時大幅提升紅線結晶、斡旋火花與成果券進度。",
+      "image_url": "assets/pets/pet_offer_006.webp",
+      "thumbnail_url": "assets/pets/pet_offer_006-thumb.webp",
+      "line_title": "SSR 斡旋星龍",
+      "line_subtitle": "當雙方的線靠近時，迷宮會亮出出口。",
+      "palette": [
+        "#c2415d",
+        "#f0c866",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_contract_001",
+      "storyline_id": "sl_contract_team_sanctum",
+      "name": "印章犬",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "CONTRACT_SIGNED"
+      ],
+      "required_awaken_materials": [
+        "金鑰印記",
+        "簽約核心"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "簽約事件出現時，提供少量成交神殿經驗。",
+      "image_url": "assets/pets/pet_contract_001.webp",
+      "thumbnail_url": "assets/pets/pet_contract_001-thumb.webp",
+      "line_title": "抽到印章犬",
+      "line_subtitle": "它把重要的一刻穩穩蓋下印記。",
+      "palette": [
+        "#b88217",
+        "#d45f45",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_contract_002",
+      "storyline_id": "sl_contract_team_sanctum",
+      "name": "合約貓",
+      "rarity": "N",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "CONTRACT_SIGNED"
+      ],
+      "required_awaken_materials": [
+        "金鑰印記",
+        "簽約核心"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "簽約祝福池中可取得，重複時轉為成交神殿碎片。",
+      "image_url": "assets/pets/pet_contract_002.webp",
+      "thumbnail_url": "assets/pets/pet_contract_002-thumb.webp",
+      "line_title": "抽到合約貓",
+      "line_subtitle": "它讓成果看起來乾淨、完整、值得收藏。",
+      "palette": [
+        "#b88217",
+        "#d45f45",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_contract_003",
+      "storyline_id": "sl_contract_team_sanctum",
+      "name": "集氣熊",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "TEAM_MISSION"
+      ],
+      "required_awaken_materials": [
+        "團隊星核",
+        "金鑰印記"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "店內共同任務達標時，追加團隊星核。",
+      "image_url": "assets/pets/pet_contract_003.webp",
+      "thumbnail_url": "assets/pets/pet_contract_003-thumb.webp",
+      "line_title": "抽到集氣熊",
+      "line_subtitle": "它把大家今天的努力收成一顆星核。",
+      "palette": [
+        "#b88217",
+        "#d45f45",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_contract_004",
+      "storyline_id": "sl_contract_team_sanctum",
+      "name": "支援犬",
+      "rarity": "R",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "TEAM_MISSION",
+        "CONTRACT_SIGNED"
+      ],
+      "required_awaken_materials": [
+        "團隊星核",
+        "金鑰印記",
+        "簽約核心"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "團隊任務與簽約同日完成時，額外增加成交神殿碎片。",
+      "image_url": "assets/pets/pet_contract_004.webp",
+      "thumbnail_url": "assets/pets/pet_contract_004-thumb.webp",
+      "line_title": "抽到支援犬",
+      "line_subtitle": "它提醒你，成交背後常常有一整隊的支援。",
+      "palette": [
+        "#b88217",
+        "#d45f45",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_contract_005",
+      "storyline_id": "sl_contract_team_sanctum",
+      "name": "成交獅",
+      "rarity": "SR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型"
+      ],
+      "is_storyline_ultra_rare": false,
+      "can_be_drawn": true,
+      "can_be_ultimate": false,
+      "work_behavior_tags": [
+        "CONTRACT_SIGNED",
+        "TEAM_MISSION"
+      ],
+      "required_awaken_materials": [
+        "金鑰印記",
+        "簽約核心",
+        "團隊星核"
+      ],
+      "required_ultimate_materials": [],
+      "card_effect_summary": "簽約事件可提升簽約祝福券進度，並追加團隊星核。",
+      "image_url": "assets/pets/pet_contract_005.webp",
+      "thumbnail_url": "assets/pets/pet_contract_005-thumb.webp",
+      "line_title": "抽到成交獅",
+      "line_subtitle": "這不是壓力，是努力終於完成的一刻。",
+      "palette": [
+        "#b88217",
+        "#d45f45",
+        "#203555"
+      ]
+    },
+    {
+      "pet_id": "pet_contract_006",
+      "storyline_id": "sl_contract_team_sanctum",
+      "name": "分店守護龍",
+      "rarity": "SSR",
+      "base_form": "初生型",
+      "available_forms": [
+        "初生型",
+        "成長型",
+        "王牌型",
+        "覺醒型",
+        "究極型"
+      ],
+      "is_storyline_ultra_rare": true,
+      "can_be_drawn": true,
+      "can_be_ultimate": true,
+      "work_behavior_tags": [
+        "CONTRACT_SIGNED",
+        "TEAM_MISSION"
+      ],
+      "required_awaken_materials": [
+        "金鑰印記",
+        "簽約核心",
+        "團隊星核"
+      ],
+      "required_ultimate_materials": [
+        "同名碎片 x300",
+        "金鑰印記 x300",
+        "團隊星核 x300",
+        "簽約核心 x2"
+      ],
+      "card_effect_summary": "成交神殿核心 SSR；簽約與團隊任務會推進其覺醒與究極合成，是第一版長期目標。",
+      "image_url": "assets/pets/pet_contract_006.webp",
+      "thumbnail_url": "assets/pets/pet_contract_006-thumb.webp",
+      "line_title": "SSR 分店守護龍",
+      "line_subtitle": "當個人成果和團隊集氣合在一起，守護龍就會醒來。",
+      "palette": [
+        "#b88217",
+        "#d45f45",
+        "#203555"
+      ]
+    }
+  ]
+}

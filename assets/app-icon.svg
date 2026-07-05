@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="房仲精靈 icon">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#203555"/>
+      <stop offset="0.56" stop-color="#16845a"/>
+      <stop offset="1" stop-color="#f0c866"/>
+    </linearGradient>
+    <linearGradient id="pet" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#50a37b"/>
+      <stop offset="1" stop-color="#f0c866"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <path d="M112 352 C176 288 208 320 256 256 C304 192 344 224 400 160" fill="none" stroke="#ffffff" stroke-width="22" stroke-linecap="round" opacity=".32"/>
+  <circle cx="256" cy="270" r="126" fill="#ffffff" opacity=".18"/>
+  <path d="M168 274 C168 170 230 132 286 146 C356 164 386 218 370 300 C356 374 300 410 232 390 C190 378 168 336 168 274 Z" fill="url(#pet)" stroke="#18202d" stroke-width="18"/>
+  <path d="M194 210 C152 152 206 122 230 188 Z" fill="#f0c866" stroke="#18202d" stroke-width="14"/>
+  <path d="M326 214 C372 150 318 124 292 188 Z" fill="#f0c866" stroke="#18202d" stroke-width="14"/>
+  <circle cx="224" cy="258" r="20" fill="#18202d"/>
+  <circle cx="300" cy="258" r="20" fill="#18202d"/>
+  <circle cx="232" cy="250" r="7" fill="#ffffff"/>
+  <circle cx="308" cy="250" r="7" fill="#ffffff"/>
+  <path d="M232 314 Q260 340 292 314" fill="none" stroke="#18202d" stroke-width="18" stroke-linecap="round"/>
+  <path d="M204 350 C238 370 292 370 326 350" fill="none" stroke="#18202d" stroke-width="20" stroke-linecap="round" opacity=".7"/>
+  <path d="M226 350 L258 368 L294 348" fill="none" stroke="#f0c866" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="370" cy="138" r="24" fill="#ffffff" opacity=".86"/>
+  <path d="M370 96 L382 124 L412 128 L390 148 L396 178 L370 162 L344 178 L350 148 L328 128 L358 124 Z" fill="#f0c866" stroke="#18202d" stroke-width="8" stroke-linejoin="round"/>
+</svg>

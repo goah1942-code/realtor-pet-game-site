@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>房仲精靈</title>
+    <meta name="description" content="行程累積經驗，成果取得覺醒素材，抽卡收集房仲精靈。" />
+    <meta name="theme-color" content="#203555" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="房仲精靈" />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="zh_TW" />
+    <meta property="og:title" content="房仲精靈" />
+    <meta property="og:description" content="行程升級寵物，成果覺醒稀有夥伴。" />
+    <meta property="og:url" content="https://goah1942-code.github.io/realtor-pet-game-site/" />
+    <meta property="og:image" content="https://goah1942-code.github.io/realtor-pet-game-site/assets/share-card.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="房仲精靈" />
+    <meta name="twitter:description" content="行程升級寵物，成果覺醒稀有夥伴。" />
+    <meta name="twitter:image" content="https://goah1942-code.github.io/realtor-pet-game-site/assets/share-card.png" />
+    <link rel="icon" href="./assets/app-icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./assets/app-icon-512.png" />
+    <link rel="manifest" href="./site.webmanifest" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="branchLabel">樹林店</p>
+          <h1>房仲精靈</h1>
+        </div>
+        <div class="topbar-actions">
+          <button id="backupBtn" class="icon-button" type="button" title="匯出進度備份" aria-label="匯出進度備份">⇩</button>
+          <button id="restoreBtn" class="icon-button" type="button" title="匯入進度備份" aria-label="匯入進度備份">⇧</button>
+          <button id="resetBtn" class="icon-button" type="button" title="重置示範資料" aria-label="重置示範資料">↺</button>
+          <input id="backupInput" class="visually-hidden" type="file" accept=".json,application/json" />
+        </div>
+      </header>
+      <p id="backupStatus" class="backup-status" aria-live="polite"></p>
+
+      <section class="hero-band">
+        <div class="pet-stage" id="activePetStage"></div>
+        <div class="pet-status" id="activePetStatus"></div>
+        <div class="entry-summon" id="entrySummon"></div>
+      </section>
+
+      <nav class="tabbar" aria-label="主要功能">
+        <button class="tab-button is-active" type="button" data-view="today">今日</button>
+        <button class="tab-button" type="button" data-view="gacha">抽卡</button>
+        <button class="tab-button" type="button" data-view="collection">卡片庫</button>
+        <button class="tab-button" type="button" data-view="team">團隊</button>
+      </nav>
+
+      <section id="view-today" class="view-panel is-active">
+        <div class="section-heading">
+          <h2>今日結算</h2>
+          <button id="sampleReportBtn" class="primary-button" type="button">匯入範例</button>
+        </div>
+
+        <div class="import-panel">
+          <label class="file-picker">
+            <input id="csvInput" type="file" accept=".csv,text/csv" />
+            <span>上傳 CSV</span>
+          </label>
+          <p>支援欄位：A、B、C、D、電話量、委託、斡旋、改附表、見面談、簽約。</p>
+        </div>
+
+        <form id="manualReportForm" class="manual-report" autocomplete="off">
+          <label>
+            <span>A 商圈</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name="area" value="0" />
+          </label>
+          <label>
+            <span>B 開發</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name="development" value="0" />
+          </label>
+          <label>
+            <span>C 議價</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name="negotiation" value="0" />
+          </label>
+          <label>
+            <span>D 帶看</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name="showing" value="0" />
+          </label>
+          <label>
+            <span>電話量</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name="calls" value="0" />
+          </label>
+          <label>
+            <span>委託</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name="listing" value="0" />
+          </label>
+          <label>
+            <span>斡旋</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name="offer" value="0" />
+          </label>
+          <label>
+            <span>改附表</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name="price" value="0" />
+          </label>
+          <label>
+            <span>見面談</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name="meeting" value="0" />
+          </label>
+          <label>
+            <span>簽約</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name="contract" value="0" />
+          </label>
+          <button id="manualSubmitBtn" class="primary-button manual-submit" type="submit">結算今日</button>
+        </form>
+        <div class="daily-status" id="dailyStatus"></div>
+
+        <div class="pet-wish" id="petWish"></div>
+
+        <div class="daily-quest-list" id="dailyQuestList"></div>
+
+        <div class="metrics-grid" id="metricsGrid"></div>
+
+        <div class="reward-strip" id="rewardStrip"></div>
+
+        <div class="daily-achievement-list" id="dailyAchievementList" aria-live="polite"></div>
+
+        <div class="reward-action-bar" id="rewardActionBar"></div>
+      </section>
+
+      <section id="view-gacha" class="view-panel">
+        <div class="section-heading">
+          <h2>抽卡</h2>
+          <span id="ticketSummary" class="soft-pill"></span>
+        </div>
+
+        <div class="pool-grid" id="poolGrid"></div>
+        <div class="draw-result" id="drawResult"></div>
+      </section>
+
+      <section id="view-collection" class="view-panel">
+        <div class="section-heading">
+          <h2>卡片庫</h2>
+          <span id="collectionSummary" class="soft-pill"></span>
+        </div>
+
+        <div class="storyline-filter" id="storylineFilter" aria-label="故事線篩選"></div>
+        <div class="collection-grid" id="collectionGrid"></div>
+      </section>
+
+      <section id="view-team" class="view-panel">
+        <div class="section-heading">
+          <h2>店內任務</h2>
+          <span class="soft-pill">共同進度</span>
+        </div>
+
+        <div class="team-contribution" id="teamContribution"></div>
+        <div class="team-list" id="teamList"></div>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
