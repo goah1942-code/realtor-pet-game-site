@@ -526,6 +526,85 @@ function normalizeGameMetrics(metrics = {}) {
   return Object.fromEntries(GAME_SOURCE_METRIC_KEYS.map((key) => [key, normalizeMetricValue(metrics[key])]));
 }
 
+function currentPeriodKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
+function normalizeReportPeriodKey(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const iso = text.match(/(?:^|[^\d])(20\d{2})[-/](0?[1-9]|1[0-2])(?:[-/]\d{1,2})?(?=$|[^\d])/);
+  if (iso) return `${iso[1]}-${String(Number(iso[2])).padStart(2, "0")}`;
+  const westernMonth = text.match(/(20\d{2})\s*年\s*(\d{1,2})\s*月/);
+  if (westernMonth) return `${westernMonth[1]}-${String(Number(westernMonth[2])).padStart(2, "0")}`;
+  const roc = text.match(/(\d{2,3})\s*年\s*(\d{1,2})\s*月/);
+  if (roc) return `${Number(roc[1]) + 1911}-${String(Number(roc[2])).padStart(2, "0")}`;
+  const rocSlash = text.match(/(?:^|[^\d])(\d{2,3})[/-](\d{1,2})(?:[/-]\d{1,2})?(?=$|[^\d])/);
+  if (rocSlash) return `${Number(rocSlash[1]) + 1911}-${String(Number(rocSlash[2])).padStart(2, "0")}`;
+  return "";
+}
+
+function reportPeriodKeyFromMetrics(metrics = {}) {
+  return normalizeReportPeriodKey(metrics.__periodKey || metrics.period || metrics.month || metrics.report_month) || currentPeriodKey();
+}
+
+function diffGameMetrics(sourceMetrics, awardedMetrics) {
+  const source = normalizeGameMetrics(sourceMetrics);
+  const awarded = normalizeGameMetrics(awardedMetrics);
+  return Object.fromEntries(GAME_SOURCE_METRIC_KEYS.map((key) => [key, Math.max(0, normalizeMetricValue(source[key] - awarded[key]))]));
+}
+
+function maxGameMetrics(leftMetrics, rightMetrics) {
+  const left = normalizeGameMetrics(leftMetrics);
+  const right = normalizeGameMetrics(rightMetrics);
+  return Object.fromEntries(GAME_SOURCE_METRIC_KEYS.map((key) => [key, Math.max(left[key], right[key])]));
+}
+
+function hasMetricIncrease(metrics = {}) {
+  const normalized = normalizeGameMetrics(metrics);
+  return GAME_SOURCE_METRIC_KEYS.some((key) => normalized[key] > 0);
+}
+
+function createSourceLedger() {
+  return {
+    activePeriod: currentPeriodKey(),
+    periods: {},
+    snapshots: [],
+  };
+}
+
+function normalizeSourceLedger(sourceLedger) {
+  const ledger = isPlainObject(sourceLedger) ? sourceLedger : {};
+  const periods = {};
+  Object.entries(isPlainObject(ledger.periods) ? ledger.periods : {}).forEach(([periodKey, period]) => {
+    if (!isPlainObject(period)) return;
+    periods[periodKey] = {
+      awardedMetrics: normalizeGameMetrics(period.awardedMetrics),
+      lastSourceMetrics: normalizeGameMetrics(period.lastSourceMetrics),
+      lastImportedAt: period.lastImportedAt || "",
+    };
+  });
+  return {
+    activePeriod: normalizeReportPeriodKey(ledger.activePeriod) || currentPeriodKey(),
+    periods,
+    snapshots: Array.isArray(ledger.snapshots) ? ledger.snapshots.slice(0, 20) : [],
+  };
+}
+
+function ensureSourcePeriod(periodKey) {
+  state.sourceLedger = normalizeSourceLedger(state.sourceLedger);
+  const key = normalizeReportPeriodKey(periodKey) || currentPeriodKey();
+  state.sourceLedger.activePeriod = key;
+  state.sourceLedger.periods[key] = state.sourceLedger.periods[key] || {
+    awardedMetrics: normalizeGameMetrics(),
+    lastSourceMetrics: normalizeGameMetrics(),
+    lastImportedAt: "",
+  };
+  return state.sourceLedger.periods[key];
+}
+
 function gameSourceMetricSummary() {
   return GAME_SOURCE_METRICS.map(([, label]) => label).join("、");
 }
@@ -547,6 +626,7 @@ function createInitialState() {
       team_core: 0,
     },
     metrics: normalizeGameMetrics(SAMPLE_METRICS),
+    sourceLedger: createSourceLedger(),
     settlementStreak: {
       count: 0,
       best: 0,
@@ -672,6 +752,7 @@ function normalizeImportedState(importedState) {
     tickets: mergeObject(initial.tickets, source.tickets),
     materials: mergeObject(initial.materials, source.materials),
     metrics: normalizeGameMetrics(source.metrics || initial.metrics),
+    sourceLedger: normalizeSourceLedger(source.sourceLedger || initial.sourceLedger),
     settlementStreak: mergeObject(initial.settlementStreak, source.settlementStreak),
     lastRewards: {
       ...initial.lastRewards,
@@ -1476,25 +1557,50 @@ function buildDailyAchievements(rawMetrics, rewards = calculateRewards(rawMetric
 }
 
 function hasSettledToday() {
-  return Boolean(state.dailySettlements?.[todayKey()]?.awarded);
+  return Boolean(state.dailySettlements?.[todayKey()]);
 }
 
 function settleMetrics(rawMetrics) {
-  const metrics = normalizeGameMetrics(rawMetrics);
-  state.metrics = { ...metrics };
+  const sourceMetrics = normalizeGameMetrics(rawMetrics);
+  const periodKey = reportPeriodKeyFromMetrics(rawMetrics);
+  const period = ensureSourcePeriod(periodKey);
+  const previousAwardedMetrics = normalizeGameMetrics(period.awardedMetrics);
+  const deltaMetrics = diffGameMetrics(sourceMetrics, previousAwardedMetrics);
+  const hasIncrease = hasMetricIncrease(deltaMetrics);
+  state.metrics = { ...deltaMetrics };
   state.dailySettlements = state.dailySettlements || {};
   const dateKey = todayKey();
-  if (state.dailySettlements[dateKey]?.awarded) {
-    const correctionAchievements = buildDailyAchievements(metrics, calculateRewards(metrics), state.settlementStreak);
-    state.dailySettlements[dateKey].metrics = { ...metrics };
-    state.dailySettlements[dateKey].achievements = correctionAchievements;
-    state.dailySettlements[dateKey].corrected_at = new Date().toISOString();
+  const importedAt = new Date().toISOString();
+  period.lastSourceMetrics = { ...sourceMetrics };
+  period.lastImportedAt = importedAt;
+  state.sourceLedger.snapshots.unshift({
+    period: periodKey,
+    at: importedAt,
+    sourceMetrics: { ...sourceMetrics },
+    previousAwardedMetrics,
+    deltaMetrics: { ...deltaMetrics },
+  });
+  state.sourceLedger.snapshots = state.sourceLedger.snapshots.slice(0, 20);
+
+  if (!hasIncrease) {
+    const noDeltaAchievements = buildDailyAchievements(deltaMetrics, calculateRewards(deltaMetrics), state.settlementStreak);
     state.lastRewards = emptyRewards(true);
-    state.lastAchievements = correctionAchievements;
+    state.lastAchievements = noDeltaAchievements;
+    state.dailySettlements[dateKey] = {
+      ...(state.dailySettlements[dateKey] || {}),
+      awarded: Boolean(state.dailySettlements[dateKey]?.awarded),
+      period: periodKey,
+      sourceMetrics: { ...sourceMetrics },
+      previousAwardedMetrics,
+      metrics: { ...deltaMetrics },
+      deltaMetrics: { ...deltaMetrics },
+      achievements: noDeltaAchievements,
+      imported_at: importedAt,
+    };
     state.history.unshift({
       type: "settle",
-      at: new Date().toISOString(),
-      text: "今日數據已更新，未重複發放獎勵",
+      at: importedAt,
+      text: `${periodKey} 累積資料已記錄，沒有新增差額`,
     });
     state.history = state.history.slice(0, 12);
     saveState();
@@ -1502,10 +1608,10 @@ function settleMetrics(rawMetrics) {
     return false;
   }
 
-  let rewards = calculateRewards(metrics);
+  let rewards = calculateRewards(deltaMetrics);
   const streak = updateSettlementStreak(dateKey);
   rewards = applyStreakRewardBonus(rewards, buildStreakReward(streak.count));
-  const achievements = buildDailyAchievements(metrics, rewards, state.settlementStreak);
+  const achievements = buildDailyAchievements(deltaMetrics, rewards, state.settlementStreak);
   Object.entries(rewards).forEach(([key, value]) => {
     if (key in state.tickets) state.tickets[key] += value;
   });
@@ -1513,19 +1619,24 @@ function settleMetrics(rawMetrics) {
   rewards.materialReport = buildMaterialReport(rewards);
   const petGrowth = addExp(state.activePetId, rewards.exp);
   rewards.petGrowth = petGrowth && (petGrowth.leveled || petGrowth.formChanged) ? petGrowth : null;
+  period.awardedMetrics = maxGameMetrics(previousAwardedMetrics, sourceMetrics);
   state.lastRewards = rewards;
   state.lastAchievements = achievements;
   state.dailySettlements[dateKey] = {
     awarded: true,
-    metrics: { ...metrics },
+    period: periodKey,
+    sourceMetrics: { ...sourceMetrics },
+    previousAwardedMetrics,
+    metrics: { ...deltaMetrics },
+    deltaMetrics: { ...deltaMetrics },
     rewards,
     achievements,
-    settled_at: new Date().toISOString(),
+    settled_at: importedAt,
   };
   state.history.unshift({
     type: "settle",
-    at: new Date().toISOString(),
-    text: `今日結算：經驗 +${rewards.exp}，成果券 +${rewards.result}${rewards.streakReward ? `，${rewards.streakReward.title}` : ""}${rewards.petGrowth ? `，${petGrowthSummary(rewards.petGrowth)}` : ""}`,
+    at: importedAt,
+    text: `${periodKey} 新增差額：經驗 +${rewards.exp}，成果券 +${rewards.result}${rewards.streakReward ? `，${rewards.streakReward.title}` : ""}${rewards.petGrowth ? `，${petGrowthSummary(rewards.petGrowth)}` : ""}`,
   });
   state.history = state.history.slice(0, 12);
   saveState();
@@ -1535,10 +1646,13 @@ function settleMetrics(rawMetrics) {
 
 function parseCsv(text) {
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
-  if (!lines.length) return normalizeGameMetrics(SAMPLE_METRICS);
-  const headers = splitCsvLine(lines[0]).map((item) => item.trim());
+  const periodKey = normalizeReportPeriodKey(text) || currentPeriodKey();
+  if (!lines.length) return { ...normalizeGameMetrics(SAMPLE_METRICS), __periodKey: periodKey };
+  const headerIndex = lines.findIndex((line) => splitCsvLine(line).some((item) => headerToMetricKey(item.trim())));
+  if (headerIndex < 0) return { ...normalizeGameMetrics(SAMPLE_METRICS), __periodKey: periodKey };
+  const headers = splitCsvLine(lines[headerIndex]).map((item) => item.trim());
   const sums = normalizeGameMetrics();
-  lines.slice(1).forEach((line) => {
+  lines.slice(headerIndex + 1).forEach((line) => {
     const cells = splitCsvLine(line);
     headers.forEach((header, index) => {
       const key = headerToMetricKey(header);
@@ -1546,11 +1660,14 @@ function parseCsv(text) {
       sums[key] += parseReportMetricAmount(cells[index]);
     });
   });
-  return normalizeGameMetrics(sums);
+  return { ...normalizeGameMetrics(sums), __periodKey: periodKey };
 }
 
 function readManualMetrics(form) {
-  return normalizeGameMetrics(Object.fromEntries(METRIC_LABELS.map(([key]) => [key, form.elements[key]?.value || 0])));
+  return {
+    ...normalizeGameMetrics(Object.fromEntries(METRIC_LABELS.map(([key]) => [key, form.elements[key]?.value || 0]))),
+    __periodKey: form.elements.period?.value || currentPeriodKey(),
+  };
 }
 
 function splitCsvLine(line) {
@@ -1749,6 +1866,7 @@ function spendMaterials(required) {
 
 function render() {
   renderProfile();
+  renderReportPeriodInput();
   renderActivePet();
   renderEntrySummon();
   renderDailyStatus();
@@ -1765,20 +1883,32 @@ function render() {
   renderTeam();
 }
 
+function renderReportPeriodInput() {
+  const form = document.getElementById("manualReportForm");
+  const input = form?.elements?.period || null;
+  if (!input) return;
+  const period = normalizeReportPeriodKey(input.value) || normalizeSourceLedger(state.sourceLedger).activePeriod || currentPeriodKey();
+  input.value = period;
+}
+
 function renderDailyStatus() {
   const status = document.getElementById("dailyStatus");
   const settled = state.dailySettlements?.[todayKey()];
+  const periodText = settled?.period || normalizeSourceLedger(state.sourceLedger).activePeriod || currentPeriodKey();
   const nextStreak = nextStreakRewardPreview();
   const nextStreakText = `下個寶箱 ${nextStreak.count}天：${nextStreak.title}`;
   if (status) {
-    status.innerHTML = settled?.awarded
-      ? `<span class="material-pill">今日已領取</span><span class="soft-pill">可修正數據</span><span class="soft-pill">${escapeHtml(streakMessage())}</span><span class="soft-pill">${escapeHtml(nextStreakText)}</span>`
-      : `<span class="soft-pill">今日尚未結算</span><span class="soft-pill">${escapeHtml(streakMessage())}</span><span class="soft-pill">${escapeHtml(nextStreakText)}</span>`;
+    const periodStatus = settled
+      ? settled.awarded
+        ? `<span class="material-pill">${escapeHtml(periodText)} 差額已入帳</span><span class="soft-pill">新累積會補差額</span>`
+        : `<span class="soft-pill">${escapeHtml(periodText)} 已記錄，沒有新增差額</span><span class="soft-pill">新累積會補差額</span>`
+      : `<span class="soft-pill">${escapeHtml(periodText)} 尚未入帳新增差額</span>`;
+    status.innerHTML = `${periodStatus}<span class="soft-pill">${escapeHtml(streakMessage())}</span><span class="soft-pill">${escapeHtml(nextStreakText)}</span>`;
   }
   const manualButton = document.getElementById("manualSubmitBtn");
-  if (manualButton) manualButton.textContent = settled?.awarded ? "更新今日" : "結算今日";
+  if (manualButton) manualButton.textContent = settled ? "同步累積" : "結算差額";
   const sampleButton = document.getElementById("sampleReportBtn");
-  if (sampleButton) sampleButton.disabled = Boolean(settled?.awarded);
+  if (sampleButton) sampleButton.disabled = false;
 }
 
 function renderProfile() {
@@ -1977,8 +2107,8 @@ function renderRewardAction() {
     target.innerHTML = `
       <div class="reward-action-card">
         <div>
-          <strong>今日數據已更新</strong>
-          <span>獎勵每日只發一次，修正不會重複加券。</span>
+          <strong>累積資料已記錄</strong>
+          <span>目前沒有新增差額，所以不重複加券或素材。</span>
           ${nextStepUi.text}
         </div>
         <div class="reward-action-buttons">
@@ -2171,7 +2301,7 @@ function buildDailyShareText() {
     `夥伴：${petLine}`,
     pet && owned ? activePetAssistText(pet, owned) : "",
   ].filter(Boolean);
-  if (state.lastRewards?.blocked) lines.push("今日數據已更新，獎勵每日只發一次。");
+  if (state.lastRewards?.blocked) lines.push("累積資料已記錄，目前沒有新增差額。");
   lines.push("行程讓寵物升級，委託/斡旋/簽約拿稀有素材。");
   return lines.join("\n");
 }
