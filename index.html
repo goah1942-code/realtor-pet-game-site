@@ -66,7 +66,7 @@
             <input id="csvInput" type="file" accept=".csv,text/csv" />
             <span>上傳 CSV</span>
           </label>
-          <p>支援欄位：A、B、C、D、電話量、委託、斡旋、改附表、見面談、簽約。</p>
+          <p>支援 A/B/C/D、電話量、成果欄位，也可吃募集線、D1、募轉追、二附以上、成件/簽約金等報表欄位。</p>
         </div>
 
         <form id="manualReportForm" class="manual-report" autocomplete="off">
@@ -89,6 +89,10 @@
           <label>
             <span>電話量</span>
             <input type="number" inputmode="numeric" min="0" step="1" name="calls" value="0" />
+          </label>
+          <label>
+            <span>前置信號</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name="momentum" value="0" />
           </label>
           <label>
             <span>委託</span>

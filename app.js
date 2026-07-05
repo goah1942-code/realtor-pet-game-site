@@ -360,6 +360,7 @@ const GAME_SOURCE_METRICS = [
   ["negotiation", "C 議價"],
   ["showing", "D 帶看"],
   ["calls", "電話量"],
+  ["momentum", "前置信號"],
   ["listing", "委託"],
   ["offer", "斡旋"],
   ["price", "改附表"],
@@ -369,9 +370,11 @@ const GAME_SOURCE_METRICS = [
 
 const METRIC_LABELS = GAME_SOURCE_METRICS;
 const GAME_SOURCE_METRIC_KEYS = GAME_SOURCE_METRICS.map(([key]) => key);
+const REPORT_VALID_WEIGHT = 1;
+const REPORT_TOTAL_ONLY_WEIGHT = 0.4;
 const GAME_SOURCE_POLICY = {
   source: "每日行程/成果報表",
-  rule: "遊戲獎勵只採計最早定義的 A/B/C/D、電話量與五個成果欄位；試營運追蹤、心得、圖片、外部報表不進入經驗、券、素材或團隊貢獻計算。",
+  rule: "遊戲獎勵只採計每日行程/成果報表的 A/B/C/D、電話量、前置信號與成果欄位；試營運追蹤、心得、圖片、外部報表不進入經驗、券、素材或團隊貢獻計算。",
   excludedExamples: ["opened", "settled", "shared_daily", "drew_card", "shared_draw", "wants_to_continue", "best_hook", "blocker"],
 };
 
@@ -381,6 +384,7 @@ const SAMPLE_METRICS = {
   negotiation: 1,
   showing: 2,
   calls: 36,
+  momentum: 2,
   listing: 1,
   offer: 1,
   price: 1,
@@ -405,7 +409,7 @@ const DAILY_ACHIEVEMENTS = [
     key: "activity",
     title: "行程推進",
     detail: "行程量換成抽卡補給",
-    check: ({ metrics }) => metrics.area + metrics.development + metrics.showing + Math.floor(metrics.calls / 15) >= 2,
+    check: ({ metrics }) => metrics.area + metrics.development + metrics.showing + metrics.momentum + Math.floor(metrics.calls / 15) >= 2,
   },
   {
     key: "call",
@@ -417,19 +421,19 @@ const DAILY_ACHIEVEMENTS = [
     key: "result",
     title: "成果種子",
     detail: "成果事件推進覺醒素材",
-    check: ({ metrics }) => metrics.listing + metrics.offer + metrics.price + metrics.meeting >= 1,
+    check: ({ metrics }) => rewardCount(metrics.listing) + rewardCount(metrics.offer) + rewardCount(metrics.price) + rewardCount(metrics.meeting) >= 1,
   },
   {
     key: "listing",
     title: "委託信任",
     detail: "拿到委託印記",
-    check: ({ metrics }) => metrics.listing > 0,
+    check: ({ metrics }) => rewardCount(metrics.listing) > 0,
   },
   {
     key: "offer",
     title: "斡旋紅線",
     detail: "拿到斡旋火花",
-    check: ({ metrics }) => metrics.offer > 0,
+    check: ({ metrics }) => rewardCount(metrics.offer) > 0,
   },
   {
     key: "price",
@@ -447,7 +451,7 @@ const DAILY_ACHIEVEMENTS = [
     key: "contract",
     title: "簽約祝福",
     detail: "簽約核心已入手",
-    check: ({ metrics }) => metrics.contract > 0,
+    check: ({ metrics }) => rewardCount(metrics.contract) > 0,
   },
   {
     key: "streak3",
@@ -503,8 +507,19 @@ function buildLineShareUrl(text) {
 }
 
 function normalizeMetricValue(value) {
+  const number = Number(String(value ?? 0).replace(/,/g, ""));
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(0, Math.round(number * 10) / 10);
+}
+
+function rewardCount(value) {
   const number = Number(value || 0);
   return Math.max(0, Math.floor(Number.isFinite(number) ? number : 0));
+}
+
+function formatMetricValue(value) {
+  const number = normalizeMetricValue(value);
+  return Number.isInteger(number) ? String(number) : number.toFixed(1).replace(/\.0$/, "");
 }
 
 function normalizeGameMetrics(metrics = {}) {
@@ -1266,30 +1281,36 @@ function emptyRewards(blocked = false) {
 
 function calculateRewards(rawMetrics, pet = getActivePet(), includeWish = true) {
   const metrics = normalizeGameMetrics(rawMetrics);
+  const resultScore =
+    rewardCount(metrics.listing) +
+    rewardCount(metrics.offer) +
+    rewardCount(metrics.price) +
+    rewardCount(metrics.meeting);
+  const contractCount = rewardCount(metrics.contract);
   const activityScore =
     metrics.area * 20 +
     metrics.development * 34 +
     metrics.negotiation * 42 +
     metrics.showing * 46 +
-    metrics.calls * 2;
-  const resultScore = metrics.listing + metrics.offer + metrics.price + metrics.meeting;
+    metrics.calls * 2 +
+    metrics.momentum * 18;
   const baseRewards = {
-    exp: activityScore,
-    general: Math.max(1, Math.floor((metrics.area + metrics.development + metrics.showing + metrics.calls / 15) / 2)),
-    boosted: metrics.negotiation + metrics.showing >= 3 ? 1 : 0,
+    exp: Math.round(activityScore),
+    general: Math.max(1, Math.floor((metrics.area + metrics.development + metrics.showing + metrics.momentum + metrics.calls / 15) / 2)),
+    boosted: metrics.negotiation + metrics.showing + Math.floor(metrics.momentum / 2) >= 3 ? 1 : 0,
     result: resultScore,
-    blessing: metrics.contract,
+    blessing: contractCount,
     materials: {
-      listing_core: metrics.listing,
-      offer_core: metrics.offer,
-      negotiation_core: metrics.price + metrics.negotiation,
-      meeting_core: metrics.meeting,
-      contract_core: metrics.contract,
-      development_core: Math.floor((metrics.development + metrics.calls / 20) * 2),
-      area_core: metrics.area,
+      listing_core: rewardCount(metrics.listing),
+      offer_core: rewardCount(metrics.offer),
+      negotiation_core: rewardCount(metrics.price) + rewardCount(metrics.negotiation),
+      meeting_core: rewardCount(metrics.meeting),
+      contract_core: contractCount,
+      development_core: Math.floor((metrics.development + metrics.momentum * 0.5 + metrics.calls / 20) * 2),
+      area_core: rewardCount(metrics.area),
       call_core: Math.floor(metrics.calls / 15),
-      showing_core: metrics.showing,
-      team_core: metrics.contract > 0 ? 2 : 0,
+      showing_core: rewardCount(metrics.showing),
+      team_core: contractCount > 0 ? 2 : 0,
     },
   };
   if (!includeWish) return { ...baseRewards, wish: null };
@@ -1397,10 +1418,15 @@ function wishSummaryText(wish = state.lastRewards?.wish) {
 function buildDailyQuests(rawMetrics) {
   const metrics = normalizeGameMetrics(rawMetrics);
   const rewards = calculateRewards(metrics, getActivePet(), false);
-  const activityUnits = metrics.area + metrics.development + metrics.showing + Math.floor(metrics.calls / 15);
+  const activityUnits = metrics.area + metrics.development + metrics.showing + metrics.momentum + Math.floor(metrics.calls / 15);
   const nextGeneralNeed = activityUnits % 2 === 0 ? 2 : 1;
-  const boostedProgress = metrics.negotiation + metrics.showing;
-  const resultProgress = metrics.listing + metrics.offer + metrics.price + metrics.meeting;
+  const boostedProgress = metrics.negotiation + metrics.showing + Math.floor(metrics.momentum / 2);
+  const resultProgress =
+    rewardCount(metrics.listing) +
+    rewardCount(metrics.offer) +
+    rewardCount(metrics.price) +
+    rewardCount(metrics.meeting);
+  const contractCount = rewardCount(metrics.contract);
 
   return [
     {
@@ -1434,10 +1460,10 @@ function buildDailyQuests(rawMetrics) {
       key: "contract",
       title: "簽約祝福",
       reward: `祝福券 +${rewards.blessing}`,
-      current: metrics.contract,
+      current: contractCount,
       target: 1,
-      done: metrics.contract >= 1,
-      message: metrics.contract >= 1 ? "已拿到簽約祝福與團隊星核" : "簽約後開啟祝福池與究極素材",
+      done: contractCount >= 1,
+      message: contractCount >= 1 ? "已拿到簽約祝福與團隊星核" : "簽約後開啟祝福池與究極素材",
     },
   ];
 }
@@ -1517,7 +1543,7 @@ function parseCsv(text) {
     headers.forEach((header, index) => {
       const key = headerToMetricKey(header);
       if (!key) return;
-      sums[key] += Number(cells[index] || 0) || 0;
+      sums[key] += parseReportMetricAmount(cells[index]);
     });
   });
   return normalizeGameMetrics(sums);
@@ -1545,21 +1571,52 @@ function splitCsvLine(line) {
   return result;
 }
 
+const REPORT_HEADER_RULES = [
+  ["momentum", ["d1行程", "d1面訪行程", "募轉追", "出租募集線追蹤線", "出租募集線", "出租追蹤線", "潛承租", "租賃收定幹見面談", "租賃收定見面談", "租賃見面談"]],
+  ["showing", ["帶看成交買承租", "帶看", "成交買承租", "銷售合計", "銷售"]],
+  ["contract", ["租賃成件簽約金", "成件簽約金", "簽約金", "簽約", "成件", "成交"]],
+  ["price", ["二附以上", "二附", "改附表", "改價格", "價格"]],
+  ["meeting", ["收定幹見面談", "收定見面談", "見面談", "面談"]],
+  ["offer", ["斡旋", "收定"]],
+  ["development", ["募集線追蹤線", "募集線", "追蹤線", "潛買", "開發合計", "開發", "賣已租拜訪委託件數", "已租拜訪", "賣方拜訪", "拜訪委託件數"]],
+  ["listing", ["出租專任委託", "專任委託", "出租專任", "專任", "委託", "委托"]],
+  ["negotiation", ["塑議合計", "塑議", "庫存回報庫存數", "庫存回報", "庫存數", "議價"]],
+  ["area", ["家戶經營合計", "家戶經營", "拜訪社區店家", "拜訪社區", "店家", "op含定點派報", "op", "定點派報", "住戶服務", "社區活動", "其他派報廣宣", "派報廣宣", "商圈", "社區"]],
+  ["calls", ["電話合計", "電話量", "電話", "call"]],
+];
+
+const EXACT_REPORT_HEADERS = {
+  a: "area",
+  b: "development",
+  c: "negotiation",
+  d: "showing",
+};
+
+function normalizeReportHeader(header) {
+  return String(header || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[（）()]/g, "")
+    .replace(/[\/／\\|、,，:：\s]+/g, "");
+}
+
+function parseReportMetricAmount(value) {
+  const text = String(value ?? "").replace(/,/g, "").trim();
+  if (!text) return 0;
+  const numbers = text.match(/-?\d+(?:\.\d+)?/g)?.map(Number).filter(Number.isFinite) || [];
+  if (!numbers.length) return 0;
+  if ((text.includes("/") || text.includes("／")) && numbers.length >= 2) {
+    const valid = Math.max(0, numbers[0]);
+    const total = Math.max(valid, numbers[1]);
+    return valid * REPORT_VALID_WEIGHT + Math.max(0, total - valid) * REPORT_TOTAL_ONLY_WEIGHT;
+  }
+  return Math.max(0, numbers[0]);
+}
+
 function headerToMetricKey(header) {
-  const normalized = header.trim().toLowerCase();
-  const rules = [
-    ["area", ["a", "商圈", "社區"]],
-    ["development", ["b", "開發"]],
-    ["negotiation", ["c", "議價"]],
-    ["showing", ["d", "帶看"]],
-    ["calls", ["電話", "call"]],
-    ["listing", ["委託", "委托"]],
-    ["offer", ["斡旋"]],
-    ["price", ["改附表", "改價格", "價格"]],
-    ["meeting", ["見面談", "面談"]],
-    ["contract", ["簽約", "成交"]],
-  ];
-  return rules.find(([, keys]) => keys.some((key) => normalized.includes(key)))?.[0];
+  const normalized = normalizeReportHeader(header);
+  if (EXACT_REPORT_HEADERS[normalized]) return EXACT_REPORT_HEADERS[normalized];
+  return REPORT_HEADER_RULES.find(([, aliases]) => aliases.some((alias) => normalized.includes(alias)))?.[0];
 }
 
 function draw(poolKey) {
@@ -1806,7 +1863,7 @@ function renderEntrySummon() {
 function renderMetrics() {
   document.getElementById("metricsGrid").innerHTML = METRIC_LABELS.map(([key, label]) => `
     <div class="metric-tile">
-      <strong>${state.metrics[key] || 0}</strong>
+      <strong>${formatMetricValue(state.metrics[key] || 0)}</strong>
       <span>${label}</span>
     </div>
   `).join("");
@@ -2062,7 +2119,7 @@ function metricSummaryText(metrics = state.metrics) {
     .map(([key, label]) => [label, Number(sourceMetrics[key] || 0)])
     .filter(([, value]) => value > 0);
   if (!items.length) return "今日先累積紀錄";
-  return items.map(([label, value]) => `${label} ${value}`).join("、");
+  return items.map(([label, value]) => `${label} ${formatMetricValue(value)}`).join("、");
 }
 
 function rewardSummaryText(rewards = state.lastRewards) {
@@ -2130,7 +2187,7 @@ async function shareDailyReport() {
 function teamGoalContribution(goal, metrics = currentContributionMetrics()) {
   const sourceMetrics = normalizeGameMetrics(metrics);
   if (goal.key === "showing") return Number(sourceMetrics.showing || 0) + Number(sourceMetrics.meeting || 0);
-  if (goal.key === "development") return Number(sourceMetrics.development || 0) + Math.floor(Number(sourceMetrics.calls || 0) / 20);
+  if (goal.key === "development") return Number(sourceMetrics.development || 0) + Number(sourceMetrics.momentum || 0) + Math.floor(Number(sourceMetrics.calls || 0) / 20);
   if (goal.key === "listing") return Number(sourceMetrics.listing || 0) + Number(sourceMetrics.offer || 0) + Number(sourceMetrics.contract || 0);
   return Number(sourceMetrics[goal.key] || 0);
 }
@@ -2145,7 +2202,8 @@ function buildTeamShareText() {
     Number(metrics.area || 0) +
     Number(metrics.development || 0) +
     Number(metrics.negotiation || 0) +
-    Number(metrics.showing || 0);
+    Number(metrics.showing || 0) +
+    Number(metrics.momentum || 0);
   const resultTotal =
     Number(metrics.listing || 0) +
     Number(metrics.offer || 0) +
@@ -2153,14 +2211,14 @@ function buildTeamShareText() {
     Number(metrics.meeting || 0) +
     Number(metrics.contract || 0);
   const goalLine = TEAM_GOALS
-    .map((goal) => `${goal.name} +${teamGoalContribution(goal, metrics)}（${teamGoalCurrent(goal, metrics)}/${goal.target}）`)
+    .map((goal) => `${goal.name} +${formatMetricValue(teamGoalContribution(goal, metrics))}（${formatMetricValue(teamGoalCurrent(goal, metrics))}/${goal.target}）`)
     .join("、");
   return [
     `${PROFILE.branch} ${PROFILE.agent} 今日團隊貢獻`,
     hasSettledToday() ? "今日已結算" : "今日尚未結算",
-    `行程：A${metrics.area || 0} / B${metrics.development || 0} / C${metrics.negotiation || 0} / D${metrics.showing || 0}，電話 ${metrics.calls || 0}`,
-    `成果：委託 ${metrics.listing || 0}、斡旋 ${metrics.offer || 0}、改附表 ${metrics.price || 0}、見面談 ${metrics.meeting || 0}、簽約 ${metrics.contract || 0}`,
-    `今日合計：行程 ${activityTotal}、成果 ${resultTotal}`,
+    `行程：A${formatMetricValue(metrics.area)} / B${formatMetricValue(metrics.development)} / C${formatMetricValue(metrics.negotiation)} / D${formatMetricValue(metrics.showing)}，前置信號 ${formatMetricValue(metrics.momentum)}，電話 ${formatMetricValue(metrics.calls)}`,
+    `成果：委託 ${formatMetricValue(metrics.listing)}、斡旋 ${formatMetricValue(metrics.offer)}、改附表 ${formatMetricValue(metrics.price)}、見面談 ${formatMetricValue(metrics.meeting)}、簽約 ${formatMetricValue(metrics.contract)}`,
+    `今日合計：行程 ${formatMetricValue(activityTotal)}、成果 ${formatMetricValue(resultTotal)}`,
     `店內任務：${goalLine}`,
     "行程讓寵物升級，委託/斡旋/簽約拿稀有素材。",
   ].join("\n");
@@ -2275,9 +2333,9 @@ function renderTeam() {
     const percent = Math.min(100, Math.round((current / goal.target) * 100));
     return `
       <article class="team-row">
-        <div class="team-topline"><span>${goal.name}</span><span>${current}/${goal.target}</span></div>
+        <div class="team-topline"><span>${goal.name}</span><span>${formatMetricValue(current)}/${goal.target}</span></div>
         <div class="bar"><span style="width:${percent}%"></span></div>
-        <p class="small-text">${contribution > 0 ? `你的今日 +${contribution} · ` : ""}${goal.reward}</p>
+        <p class="small-text">${contribution > 0 ? `你的今日 +${formatMetricValue(contribution)} · ` : ""}${goal.reward}</p>
       </article>
     `;
   }).join("");
@@ -2291,7 +2349,8 @@ function renderTeamContribution() {
     Number(metrics.area || 0) +
     Number(metrics.development || 0) +
     Number(metrics.negotiation || 0) +
-    Number(metrics.showing || 0);
+    Number(metrics.showing || 0) +
+    Number(metrics.momentum || 0);
   const resultTotal =
     Number(metrics.listing || 0) +
     Number(metrics.offer || 0) +
@@ -2305,10 +2364,10 @@ function renderTeamContribution() {
         <strong>${escapeHtml(PROFILE.agent)} · ${hasSettledToday() ? "已結算" : "待結算"}</strong>
       </div>
       <div class="team-contribution-stats">
-        <span class="material-pill">行程 ${activityTotal}</span>
-        <span class="material-pill">電話 ${metrics.calls || 0}</span>
-        <span class="material-pill">成果 ${resultTotal}</span>
-        <span class="material-pill">簽約 ${metrics.contract || 0}</span>
+        <span class="material-pill">行程 ${formatMetricValue(activityTotal)}</span>
+        <span class="material-pill">電話 ${formatMetricValue(metrics.calls)}</span>
+        <span class="material-pill">成果 ${formatMetricValue(resultTotal)}</span>
+        <span class="material-pill">簽約 ${formatMetricValue(metrics.contract)}</span>
       </div>
       <div class="team-contribution-actions">
         <button class="secondary-button" type="button" data-share-team="1">分享貢獻</button>
