@@ -3987,6 +3987,116 @@ function managerLeaderboardRows() {
   );
 }
 
+function metricPairValue(metrics, key, side = "valid") {
+  const value = metrics?.[key];
+  if (isPlainObject(value)) return normalizeMetricValue(value[side] ?? value.valid ?? value.total ?? 0);
+  return normalizeMetricValue(value || 0);
+}
+
+function managerAuditRows() {
+  const previewRows = state.manager.cloudImportPreview?.player_previews;
+  if (Array.isArray(previewRows) && previewRows.length) {
+    return previewRows.map((row) => {
+      const metrics = row.current_source_metrics || row.source_metrics || {};
+      const basis = isPlainObject(row.event_basis) ? row.event_basis : {};
+      return {
+        source: "preview",
+        name: row.report_name || row.agent_name || row.uid || "同仁",
+        uid: row.uid || "",
+        period: row.report_period || state.manager.cloudImportPreview?.period || state.manager.lastImport?.period || currentPeriodKey(),
+        area: metricPairValue(metrics, "a_area_total"),
+        development: metricPairValue(metrics, "b_development_total"),
+        negotiation: metricPairValue(metrics, "c_negotiation_total"),
+        showing: metricPairValue(metrics, "d_showing_group"),
+        sales: metricPairValue(metrics, "d_sales_total"),
+        eValid: normalizeMetricValue(basis.e_valid ?? metricPairValue(metrics, "e_total_group")),
+        eTotal: normalizeMetricValue(basis.e_total ?? metricPairValue(metrics, "e_total_group", "total")),
+        calls: normalizeMetricValue(basis.calls ?? metricPairValue(metrics, "calls")),
+        listing: metricPairValue(metrics, "listing") + metricPairValue(metrics, "rent_listing"),
+        meeting: metricPairValue(metrics, "meeting_or_offer") + metricPairValue(metrics, "rent_meeting_or_offer"),
+        contract: metricPairValue(metrics, "contract") + metricPairValue(metrics, "rent_contract"),
+      };
+    });
+  }
+  const cloudPlayers = state.manager.cloudDashboard?.players;
+  if (Array.isArray(cloudPlayers) && cloudPlayers.length) {
+    return cloudPlayers.map((row) => {
+      const metrics = row.source_metrics || row.sourceMetrics || {};
+      const basis = isPlainObject(row.event_basis) ? row.event_basis : {};
+      return {
+        source: "published",
+        name: row.agent_name || row.report_name || row.uid || "同仁",
+        uid: row.uid || "",
+        period: row.report_period || state.manager.cloudDashboard?.period || currentPeriodKey(),
+        area: metricPairValue(metrics, "a_area_total"),
+        development: metricPairValue(metrics, "b_development_total"),
+        negotiation: metricPairValue(metrics, "c_negotiation_total"),
+        showing: metricPairValue(metrics, "d_showing_group"),
+        sales: metricPairValue(metrics, "d_sales_total"),
+        eValid: normalizeMetricValue(basis.e_valid ?? metricPairValue(metrics, "e_total_group")),
+        eTotal: normalizeMetricValue(basis.e_total ?? metricPairValue(metrics, "e_total_group", "total")),
+        calls: normalizeMetricValue(basis.calls ?? metricPairValue(metrics, "calls")),
+        listing: metricPairValue(metrics, "listing") + metricPairValue(metrics, "rent_listing"),
+        meeting: metricPairValue(metrics, "meeting_or_offer") + metricPairValue(metrics, "rent_meeting_or_offer"),
+        contract: metricPairValue(metrics, "contract") + metricPairValue(metrics, "rent_contract"),
+      };
+    });
+  }
+  return [];
+}
+
+function renderManagerImportAudit() {
+  const target = document.getElementById("managerImportAudit");
+  if (!target) return;
+  const rows = managerAuditRows();
+  const modeLabel = state.manager.cloudImportPreview?.import_id ? "預覽資料" : rows.length ? "已入帳資料" : "尚無資料";
+  target.innerHTML = `
+    <article class="manager-card">
+      <span class="summon-kicker">匯入數據比對表</span>
+      <strong>${modeLabel} · ${rows.length} 位</strong>
+      <div class="audit-table-wrap">
+        <div class="audit-table" role="table" aria-label="匯入數據比對表">
+          <div class="audit-row audit-head" role="row">
+            <span>人名</span>
+            <span>員編</span>
+            <span>A 商圈</span>
+            <span>B 開發</span>
+            <span>C 議價</span>
+            <span>D 帶看</span>
+            <span>D 銷售</span>
+            <span>E 有效</span>
+            <span>E 全部</span>
+            <span>F 電話</span>
+            <span>委託</span>
+            <span>見面談</span>
+            <span>簽約</span>
+          </div>
+          ${rows.length ? rows.map((row) => `
+            <div class="audit-row" role="row">
+              <span>${escapeHtml(row.name)}</span>
+              <span>${escapeHtml(String(row.uid))}</span>
+              <span>${formatMetricValue(row.area)}</span>
+              <span>${formatMetricValue(row.development)}</span>
+              <span>${formatMetricValue(row.negotiation)}</span>
+              <span>${formatMetricValue(row.showing)}</span>
+              <span>${formatMetricValue(row.sales)}</span>
+              <span>${formatMetricValue(row.eValid)}</span>
+              <span>${formatMetricValue(row.eTotal)}</span>
+              <span>${formatMetricValue(row.calls)}</span>
+              <span>${formatMetricValue(row.listing)}</span>
+              <span>${formatMetricValue(row.meeting)}</span>
+              <span>${formatMetricValue(row.contract)}</span>
+            </div>
+          `).join("") : `
+            <div class="audit-empty">上傳 Excel 或預覽 Google Sheet 後，這裡會出現逐人數據。</div>
+          `}
+        </div>
+      </div>
+      <p class="small-text">這張表只給店長核對匯入資料；A-F 依目前報表欄位解析，確認無誤後再按「確認入帳」。</p>
+    </article>
+  `;
+}
+
 function renderManagerTemporaryTasks() {
   const target = document.getElementById("managerTemporaryTasks");
   if (!target) return;
@@ -4058,6 +4168,7 @@ function renderManagerDashboard() {
   if (temporaryTaskToggle) temporaryTaskToggle.textContent = state.manager.temporaryTaskStarted ? "已開啟" : "未開啟";
 
   renderManagerTemporaryTasks();
+  renderManagerImportAudit();
   renderManagerLeaderboard();
 
   const tracking = document.getElementById("managerTracking");

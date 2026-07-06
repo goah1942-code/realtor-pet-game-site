@@ -1012,6 +1012,7 @@ h3 {
 }
 
 .manager-leaderboard,
+.manager-import-audit,
 .manager-collection {
   grid-column: 1 / -1;
 }
@@ -1054,6 +1055,51 @@ h3 {
   background: #edf3f6;
   color: var(--muted);
   font-size: 12px;
+}
+
+.audit-table-wrap {
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.audit-table {
+  display: grid;
+  gap: 6px;
+  min-width: 980px;
+}
+
+.audit-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 1.2fr) 72px repeat(11, 68px);
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: #f7f9fb;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.audit-row span {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.audit-head {
+  background: #edf3f6;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.audit-empty {
+  padding: 12px;
+  border-radius: 8px;
+  background: #f7f9fb;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .warning-text {
