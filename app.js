@@ -1466,6 +1466,49 @@ function cloudImportSheetId() {
   return cleanProfileText(document.getElementById("cloudImportSheetId")?.value || "", "", 140);
 }
 
+const EXCEL_REPORT_COLUMNS = {
+  d1_schedule: 4,
+  d1_face_schedule: 5,
+  buy_listing_line: 6,
+  buy_listing_to_follow: 7,
+  buy_prospect: 8,
+  listing: 9,
+  price_revision: 10,
+  meeting_or_offer: 11,
+  contract: 12,
+  rent_listing_line: 13,
+  rent_prospect: 14,
+  rent_listing: 15,
+  rent_meeting_or_offer: 16,
+  rent_contract: 17,
+  a_area_total: 23,
+  b_development_total: 24,
+  b_listing_visit: 25,
+  c_negotiation_total: 26,
+  c_inventory_total: 27,
+  d_sales_total: 28,
+  d_showing_group: 29,
+  e_total_group: 30,
+  calls: 32,
+  schedule_total: 36,
+};
+
+const EXCEL_TEAM_ROWS = new Set(["樹林", "樹林店"]);
+const EXCEL_MONTHS = {
+  一月: 1,
+  二月: 2,
+  三月: 3,
+  四月: 4,
+  五月: 5,
+  六月: 6,
+  七月: 7,
+  八月: 8,
+  九月: 9,
+  十月: 10,
+  十一月: 11,
+  十二月: 12,
+};
+
 async function previewCloudImport() {
   if (!CLOUD_API_BASE_URL) {
     setCloudImportStatus("尚未設定 ?api=<Apps Script Web App URL>", "bad");
@@ -1506,6 +1549,346 @@ async function previewCloudImport() {
     setCloudImportStatus(`預覽失敗：${error.message || "unknown"}`, "bad");
     return false;
   }
+}
+
+async function previewCloudExcelFile(file) {
+  if (!CLOUD_API_BASE_URL || CLOUD_API_BASE_URL === "mock") {
+    setCloudImportStatus("Excel 直接匯入需要正式雲端 API；mock 模式請用 CSV 或 Google Sheet ID。", "bad");
+    return false;
+  }
+  const managerKey = getCloudManagerKey();
+  if (cloudManagerKeyRequired()) {
+    setCloudImportStatus("管理網址缺少 manager_key，請使用店長專用入口", "bad");
+    return false;
+  }
+  try {
+    setCloudImportStatus("正在讀取 Excel 第一個分頁...");
+    const parsed = await parseXlsxFirstSheet(file);
+    const importId = randomClientId("xlsx");
+    await postCloudEnvelope("uploadParsedImport", {
+      mode: "init",
+      manager_key: managerKey,
+      import_id: importId,
+      file_name: parsed.fileName,
+      period: parsed.period,
+      warning_count: parsed.warnings.length,
+    });
+    const uploadRows = [...parsed.rows, ...parsed.teamRows];
+    for (let index = 0; index < uploadRows.length; index += 1) {
+      const row = uploadRows[index];
+      setCloudImportStatus(`正在建立預覽 ${index + 1}/${uploadRows.length}...`);
+      await postCloudEnvelope("uploadParsedImport", {
+        mode: "row",
+        manager_key: managerKey,
+        import_id: importId,
+        uid: row.uid,
+        report_name: row.reportName,
+        report_period: parsed.period,
+        row_status: row.rowStatus,
+        source_metrics_json: JSON.stringify(row.metrics),
+        event_basis_json: JSON.stringify(row.eventBasis),
+        warnings_json: JSON.stringify(row.warnings || []),
+      });
+    }
+    const envelope = await postCloudEnvelope("uploadParsedImport", {
+      mode: "finish",
+      manager_key: managerKey,
+      import_id: importId,
+    });
+    const data = cloudEnvelopeData(envelope, "uploadParsedImport");
+    if (!data || !data.import_id) throw new Error(envelope?.errors?.[0]?.message || "Excel preview missing import_id");
+    state.manager.cloudImportPreview = data;
+    state.manager.cloudStatus = "cloud-uploadParsedImport-preview";
+    state.manager.warnings = parsed.warnings;
+    state.manager.lastImport = {
+      at: new Date().toISOString(),
+      period: parsed.period,
+      source: parsed.fileName,
+      rows: parsed.rows.length,
+    };
+    saveState();
+    render();
+    setCloudImportStatus(`Excel 預覽完成：${parsed.sheetName}，${parsed.rows.length} 位同仁，只讀第一個分頁`, "good");
+    return true;
+  } catch (error) {
+    state.manager.cloudStatus = `cloud-excel-preview-error:${error.message || "unknown"}`;
+    state.manager.warnings = [`Excel 預覽失敗：${error.message || "unknown"}`];
+    saveState();
+    render();
+    setCloudImportStatus(`Excel 預覽失敗：${error.message || "unknown"}`, "bad");
+    return false;
+  }
+}
+
+async function parseXlsxFirstSheet(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+  if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
+    return parseHtmlExcelFirstSheet(arrayBuffer, file.name || "Excel 匯入");
+  }
+  if (typeof DecompressionStream !== "function") {
+    throw new Error("這個瀏覽器不支援 Excel 解壓縮，請改用 Google Sheet ID。");
+  }
+  const entries = await readZipEntries(arrayBuffer);
+  const workbookXml = textEntry(entries, "xl/workbook.xml");
+  const relsXml = textEntry(entries, "xl/_rels/workbook.xml.rels");
+  const sharedStrings = entries["xl/sharedStrings.xml"] ? parseSharedStrings(textEntry(entries, "xl/sharedStrings.xml")) : [];
+  const firstSheet = firstWorkbookSheet(workbookXml, relsXml);
+  const sheetXml = textEntry(entries, firstSheet.path);
+  const grid = worksheetToGrid(sheetXml, sharedStrings);
+  return parseReportGrid(grid, {
+    fileName: file.name || "Excel 匯入",
+    sheetName: firstSheet.name,
+  });
+}
+
+function parseHtmlExcelFirstSheet(arrayBuffer, fileName) {
+  const bytes = new Uint8Array(arrayBuffer);
+  if (bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0) {
+    throw new Error("舊式二進位 .xls 暫不支援，請另存成 .xlsx 後上傳；HTML 型 .xls 可直接讀第一張表。");
+  }
+  const html = decodeExcelText(bytes);
+  if (!/<table[\s>]/i.test(html)) {
+    throw new Error("這個 Excel 不是 .xlsx 或 HTML 型 .xls，請另存成 .xlsx 後上傳。");
+  }
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const table = doc.querySelector("table");
+  if (!table) throw new Error("HTML 型 Excel 找不到第一張表");
+  return parseReportGrid(htmlTableToGrid(table), {
+    fileName,
+    sheetName: "第一張表",
+  });
+}
+
+function decodeExcelText(bytes) {
+  const decoderNames = ["utf-8", "big5"];
+  for (const name of decoderNames) {
+    try {
+      const text = new TextDecoder(name).decode(bytes);
+      if (/<table[\s>]/i.test(text) || /合計/.test(text)) return text;
+    } catch (error) {
+      // Some browsers do not expose every legacy decoder. Try the next one.
+    }
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+function htmlTableToGrid(table) {
+  const grid = [];
+  Array.from(table.rows).forEach((tr, rowIndex) => {
+    if (!grid[rowIndex]) grid[rowIndex] = [];
+    let columnIndex = 0;
+    Array.from(tr.cells).forEach((cell) => {
+      while (grid[rowIndex][columnIndex] !== undefined) columnIndex += 1;
+      const value = cleanProfileText(cell.textContent || "", "", 400);
+      const colspan = Math.max(1, Number(cell.getAttribute("colspan") || 1));
+      const rowspan = Math.max(1, Number(cell.getAttribute("rowspan") || 1));
+      for (let rowOffset = 0; rowOffset < rowspan; rowOffset += 1) {
+        const targetRow = rowIndex + rowOffset;
+        if (!grid[targetRow]) grid[targetRow] = [];
+        for (let colOffset = 0; colOffset < colspan; colOffset += 1) {
+          grid[targetRow][columnIndex + colOffset] = rowOffset === 0 && colOffset === 0 ? value : "";
+        }
+      }
+      columnIndex += colspan;
+    });
+  });
+  return grid;
+}
+
+async function readZipEntries(arrayBuffer) {
+  const view = new DataView(arrayBuffer);
+  const bytes = new Uint8Array(arrayBuffer);
+  let eocd = -1;
+  for (let offset = bytes.length - 22; offset >= 0; offset -= 1) {
+    if (view.getUint32(offset, true) === 0x06054b50) {
+      eocd = offset;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error("找不到 Excel zip 結尾");
+  const totalEntries = view.getUint16(eocd + 10, true);
+  let centralOffset = view.getUint32(eocd + 16, true);
+  const entries = {};
+  const decoder = new TextDecoder("utf-8");
+  for (let index = 0; index < totalEntries; index += 1) {
+    if (view.getUint32(centralOffset, true) !== 0x02014b50) throw new Error("Excel zip central directory 格式不符");
+    const method = view.getUint16(centralOffset + 10, true);
+    const compressedSize = view.getUint32(centralOffset + 20, true);
+    const nameLength = view.getUint16(centralOffset + 28, true);
+    const extraLength = view.getUint16(centralOffset + 30, true);
+    const commentLength = view.getUint16(centralOffset + 32, true);
+    const localOffset = view.getUint32(centralOffset + 42, true);
+    const name = decoder.decode(bytes.slice(centralOffset + 46, centralOffset + 46 + nameLength));
+    const localNameLength = view.getUint16(localOffset + 26, true);
+    const localExtraLength = view.getUint16(localOffset + 28, true);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = bytes.slice(dataStart, dataStart + compressedSize);
+    entries[name] = method === 0 ? compressed : await inflateRaw(compressed);
+    centralOffset += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+async function inflateRaw(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+function textEntry(entries, path) {
+  const entry = entries[path];
+  if (!entry) throw new Error(`Excel 缺少必要檔案：${path}`);
+  return new TextDecoder("utf-8").decode(entry);
+}
+
+function parseXml(text) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  const parserError = doc.querySelector("parsererror");
+  if (parserError) throw new Error("Excel XML 解析失敗");
+  return doc;
+}
+
+function parseSharedStrings(xmlText) {
+  return Array.from(parseXml(xmlText).getElementsByTagName("si")).map((item) =>
+    Array.from(item.getElementsByTagName("t")).map((node) => node.textContent || "").join("")
+  );
+}
+
+function firstWorkbookSheet(workbookXml, relsXml) {
+  const workbook = parseXml(workbookXml);
+  const rels = parseXml(relsXml);
+  const sheet = workbook.getElementsByTagName("sheet")[0];
+  if (!sheet) throw new Error("Excel 找不到第一個分頁");
+  const relId = sheet.getAttribute("r:id") || sheet.getAttribute("id");
+  const relationship = Array.from(rels.getElementsByTagName("Relationship")).find((item) => item.getAttribute("Id") === relId);
+  const target = relationship?.getAttribute("Target") || "worksheets/sheet1.xml";
+  const path = target.startsWith("/") ? target.replace(/^\/+/, "") : `xl/${target.replace(/^\.?\//, "")}`;
+  return { name: sheet.getAttribute("name") || "工作表1", path };
+}
+
+function worksheetToGrid(sheetXml, sharedStrings) {
+  const doc = parseXml(sheetXml);
+  const grid = [];
+  Array.from(doc.getElementsByTagName("c")).forEach((cell) => {
+    const ref = cell.getAttribute("r") || "";
+    const match = ref.match(/^([A-Z]+)(\d+)$/);
+    if (!match) return;
+    const rowIndex = Number(match[2]) - 1;
+    const columnIndex = excelColumnNumber(match[1]) - 1;
+    const type = cell.getAttribute("t") || "";
+    const valueNode = cell.getElementsByTagName("v")[0];
+    let value = valueNode ? valueNode.textContent || "" : "";
+    if (type === "s") value = sharedStrings[Number(value)] || "";
+    if (type === "inlineStr") {
+      value = Array.from(cell.getElementsByTagName("t")).map((node) => node.textContent || "").join("");
+    }
+    if (!grid[rowIndex]) grid[rowIndex] = [];
+    grid[rowIndex][columnIndex] = value;
+  });
+  return grid;
+}
+
+function excelColumnNumber(letters) {
+  return letters.split("").reduce((sum, char) => sum * 26 + char.charCodeAt(0) - 64, 0);
+}
+
+function gridText(grid, row, column) {
+  return cleanProfileText(grid[row - 1]?.[column - 1] ?? "", "", 200);
+}
+
+function gridNumber(grid, row, column) {
+  const raw = grid[row - 1]?.[column - 1];
+  if (raw === undefined || raw === null || raw === "" || raw === "/" || raw === "-") return 0;
+  const number = Number(String(raw).replace(/,/g, ""));
+  return Number.isFinite(number) ? number : 0;
+}
+
+function collectExcelVerticalName(grid, startRow) {
+  const chars = [];
+  for (let row = startRow; row <= grid.length; row += 1) {
+    if (gridText(grid, row, 3) === "平均") break;
+    const char = gridText(grid, row, 1);
+    if (char) chars.push(char);
+  }
+  return chars.join("");
+}
+
+function inferExcelPeriod(grid, sheetName) {
+  const sheetMonth = EXCEL_MONTHS[cleanProfileText(sheetName, "", 20)];
+  const topText = grid.slice(0, 10).map((row) => (row || []).join(" ")).join(" ");
+  const transfer = topText.match(/最新轉檔時間[:：]?\s*(\d{2,4})[/-](\d{1,2})[/-](\d{1,2})/);
+  if (transfer) {
+    const year = Number(transfer[1]) < 1911 ? Number(transfer[1]) + 1911 : Number(transfer[1]);
+    const month = sheetMonth || Number(transfer[2]);
+    return {
+      period: `${year}-${String(month).padStart(2, "0")}`,
+      transferDate: `${year}-${String(Number(transfer[2])).padStart(2, "0")}-${String(Number(transfer[3])).padStart(2, "0")}`,
+      warnings: sheetMonth && sheetMonth !== Number(transfer[2]) ? [`轉檔月份與分頁名稱不同，使用第一分頁名稱 ${sheetName}`] : [],
+    };
+  }
+  return { period: currentPeriodKey(), transferDate: "", warnings: ["找不到轉檔日期，使用目前月份"] };
+}
+
+function excelMetricPair(grid, startRow, key) {
+  const column = EXCEL_REPORT_COLUMNS[key];
+  return {
+    valid: gridNumber(grid, startRow, column),
+    total: gridNumber(grid, startRow + 2, column),
+  };
+}
+
+function excelEventBasis(metrics) {
+  const valid = (key) => Number(metrics[key]?.valid || 0);
+  const total = (key) => Number(metrics[key]?.total || valid(key));
+  const bcdValid = valid("b_development_total") + valid("c_negotiation_total") + valid("d_sales_total");
+  const eValid = valid("e_total_group");
+  const eTotal = total("e_total_group");
+  const monthlyPolicy = valid("b_development_total") + valid("d_showing_group");
+  return {
+    e_valid: eValid,
+    e_total: eTotal,
+    bcd_valid: bcdValid,
+    bcd_valid_gt_4: bcdValid > 4,
+    e_valid_progress_tier: eValid >= 4 ? 4 : eValid >= 3 ? 3 : 0,
+    e_total_gte_6: eTotal >= 6,
+    monthly_policy_development_plus_showing: monthlyPolicy,
+    monthly_policy_development_plus_showing_gte_20: monthlyPolicy >= 20,
+    calls: valid("calls"),
+  };
+}
+
+function parseReportGrid(grid, { fileName, sheetName }) {
+  const periodInfo = inferExcelPeriod(grid, sheetName);
+  const rows = [];
+  const teamRows = [];
+  const warnings = [...periodInfo.warnings];
+  for (let row = 1; row <= grid.length; row += 1) {
+    if (gridText(grid, row, 3) !== "合計") continue;
+    const reportName = collectExcelVerticalName(grid, row);
+    if (!reportName) continue;
+    const metrics = Object.fromEntries(Object.keys(EXCEL_REPORT_COLUMNS).map((key) => [key, excelMetricPair(grid, row, key)]));
+    const parsedRow = {
+      uid: reportName,
+      reportName,
+      rowStatus: EXCEL_TEAM_ROWS.has(reportName) ? "TEAM_SUMMARY" : "MATCHED",
+      metrics,
+      eventBasis: excelEventBasis(metrics),
+      warnings: [],
+    };
+    if (parsedRow.rowStatus === "TEAM_SUMMARY") teamRows.push(parsedRow);
+    else rows.push(parsedRow);
+  }
+  if (!rows.length) throw new Error("第一個分頁找不到同仁合計列");
+  return {
+    fileName,
+    sheetName,
+    period: periodInfo.period,
+    transferDate: periodInfo.transferDate,
+    rows,
+    teamRows,
+    warnings,
+    summary: { matched_active_players: rows.length, team_rows: teamRows.length },
+  };
 }
 
 async function commitCloudImport() {
@@ -1580,11 +1963,8 @@ function handleManagerFile(file) {
   if (!file) return false;
   const name = file.name || "匯入檔案";
   if (/\.(xlsx|xls)$/i.test(name)) {
-    state.manager.warnings = ["Excel 檔需要後端先拆成資料接口；目前前端雛形只直接讀 CSV/TXT。"];
-    state.manager.lastImport = { at: new Date().toISOString(), period: currentPeriodKey(), source: name, rows: 0 };
-    saveState();
-    render();
-    return false;
+    previewCloudExcelFile(file);
+    return true;
   }
   const reader = new FileReader();
   reader.addEventListener("load", () => applyManagerImportText(String(reader.result || ""), name));
