@@ -2461,6 +2461,161 @@ function totalTickets() {
   return Object.values(state.tickets).reduce((sum, value) => sum + value, 0);
 }
 
+function ticketEntries() {
+  return Object.entries(state.tickets || {}).filter(([, value]) => Number(value || 0) > 0);
+}
+
+function missingMaterials(required = {}) {
+  return Object.entries(required || {})
+    .map(([key, target]) => ({
+      key,
+      label: materialLabel(key),
+      target: Number(target || 0),
+      current: Number(state.materials?.[key] || 0),
+      missing: Math.max(0, Number(target || 0) - Number(state.materials?.[key] || 0)),
+    }))
+    .filter((item) => item.missing > 0);
+}
+
+function compactTicketText(entries = ticketEntries()) {
+  if (!entries.length) return "目前沒有可抽券";
+  return entries.map(([key, value]) => `${ticketLabel(key)} ${value}`).join(" · ");
+}
+
+function buildGrowthFocus(pet = getActivePet(), owned = pet ? getOwned(pet.pet_id) : null) {
+  if (!pet || !owned) {
+    return {
+      title: "先取得主寵",
+      detail: "抽到第一隻夥伴後，行程就會變成牠的經驗。",
+      value: "待啟動",
+      tone: "soft",
+    };
+  }
+  const expMax = expNeeded(owned.level || 1);
+  const need = Math.max(0, expMax - Number(owned.exp || 0));
+  const nextForm = owned.level >= 6 ? currentForm(pet, owned) : "成長型";
+  return {
+    title: "行程升級線",
+    detail: need > 0
+      ? `再 ${need} 經驗，${pet.name} 就能升到 Lv.${(owned.level || 1) + 1}。`
+      : `${pet.name} 已經準備升級。`,
+    value: `Lv.${owned.level || 1}`,
+    tone: nextForm === currentForm(pet, owned) ? "ready" : "growth",
+  };
+}
+
+function buildAwakenFocus(pet = getActivePet(), owned = pet ? getOwned(pet.pet_id) : null) {
+  if (!pet || !owned || !pet.available_forms?.includes("覺醒型")) {
+    return {
+      title: "成果覺醒線",
+      detail: "這隻夥伴暫時沒有覺醒需求，先累積卡片庫。",
+      value: "收藏",
+      tone: "soft",
+    };
+  }
+  if (owned.awakened) {
+    return {
+      title: "成果覺醒線",
+      detail: `${pet.name} 已覺醒，下一步看成熟/究極合成素材。`,
+      value: "已覺醒",
+      tone: "ready",
+    };
+  }
+  if (canAwaken(pet, owned)) {
+    return {
+      title: "成果覺醒線",
+      detail: `${pet.name} 素材已足，可以到卡片庫覺醒。`,
+      value: "可覺醒",
+      tone: "hot",
+    };
+  }
+  const missing = missingMaterials(pet.required_awaken_materials);
+  if (owned.star < 5) {
+    return {
+      title: "成果覺醒線",
+      detail: `素材先留著，還需要把星級升到 5 星。`,
+      value: `${owned.star || 1}/5 星`,
+      tone: "growth",
+    };
+  }
+  return {
+    title: "成果覺醒線",
+    detail: missing.length
+      ? `還缺 ${missing.slice(0, 2).map((item) => `${item.label} ${item.missing}`).join("、")}。`
+      : "素材已接近完成，整理卡片庫看看下一步。",
+    value: missing.length ? `缺 ${missing.length} 種` : "快完成",
+    tone: missing.length <= 1 ? "hot" : "growth",
+  };
+}
+
+function findFirstActionableCollection() {
+  const ownedPets = PETS
+    .map((pet) => ({ pet, owned: getOwned(pet.pet_id) }))
+    .filter((item) => item.owned);
+  const awaken = ownedPets.find(({ pet, owned }) => canAwaken(pet, owned));
+  if (awaken) return { ...awaken, type: "awaken", label: "去覺醒", text: `${awaken.pet.name} 已達覺醒條件。` };
+  const ultimate = ownedPets.find(({ pet, owned }) => canUltimate(pet, owned));
+  if (ultimate) return { ...ultimate, type: "ultimate", label: "究極合成", text: `${ultimate.pet.name} 可以合成究極型。` };
+  const star = ownedPets.find(({ owned }) => owned.star < 5 && owned.duplicate_fragments >= starCost(owned.star + 1));
+  if (star) return { ...star, type: "star", label: "去升星", text: `${star.pet.name} 碎片已足，可以升星。` };
+  const materialReady = ownedPets.find(({ pet, owned }) =>
+    !owned.awakened &&
+    owned.star < 5 &&
+    pet.available_forms?.includes("覺醒型") &&
+    !missingMaterials(pet.required_awaken_materials).length
+  );
+  if (materialReady) return { ...materialReady, type: "material-ready", label: "整理卡片庫", text: `${materialReady.pet.name} 素材已足，先補碎片升星。` };
+  return null;
+}
+
+function buildEntryExperienceCue() {
+  const pet = getActivePet();
+  const owned = getOwned(pet.pet_id);
+  const tickets = totalTickets();
+  const settled = Boolean(state.dailySettlements?.[todayKey()]?.awarded);
+  const action = findFirstActionableCollection();
+  if (action) {
+    return {
+      kicker: "現在可操作",
+      title: `${PROFILE.agent}，${action.text}`,
+      detail: "先把已經到手的素材或碎片變成戰力，卡片庫會更有推進感。",
+      view: "collection",
+      label: action.label,
+      tone: "hot",
+    };
+  }
+  if (tickets > 0) {
+    return {
+      kicker: "今日可抽",
+      title: `${PROFILE.agent}，現在有 ${tickets} 次抽卡機會。`,
+      detail: `${compactTicketText()}。免費抽若已發放，今天沒用就不保留。`,
+      view: "gacha",
+      label: "去抽卡",
+      tone: "hot",
+    };
+  }
+  const wish = buildPetWish(state.metrics, pet);
+  if (!wish.done) {
+    return {
+      kicker: "今日差一點",
+      title: `${PROFILE.agent}，今天再推 ${Math.max(1, wish.target - wish.current)} ${wish.unit}，${pet.name} 會更接近升級。`,
+      detail: wish.message,
+      view: "today",
+      label: settled ? "看成果累積" : "看今日進度",
+      tone: "growth",
+    };
+  }
+  const growth = buildGrowthFocus(pet, owned);
+  return {
+    kicker: "今日推進",
+    title: `${PROFILE.agent}，${pet.name} 今天已經醒來。`,
+    detail: `${growth.detail} 主寵稀有感應已開啟，倍率待設定。`,
+    view: "today",
+    label: "看成果累積",
+    tone: "ready",
+  };
+}
+
 function activePetAssistText(pet = getActivePet(), owned = pet ? getOwned(pet.pet_id) : null) {
   if (!pet || !owned) return "主寵助力：取得主寵後開啟";
   const rule = state.backendConfig?.assistRules?.[pet.storyline_id] || state.backendConfig?.assistRules?.default;
@@ -2519,6 +2674,34 @@ function poolUnlocked(pool, progress = state.progress || buildProgressSnapshot()
   if (pool.key === "result") return Boolean(progress.contractTemple?.current > 0 || (state.tickets.result || 0) > 0);
   if (pool.key === "blessing") return Boolean(Number(progress.contractTemple?.sources?.contract || 0) > 0 || (state.tickets.blessing || 0) > 0);
   return true;
+}
+
+function poolPriority(pool) {
+  const tickets = Number(state.tickets?.[pool.key] || 0);
+  const unlocked = poolUnlocked(pool);
+  if (tickets > 0 && unlocked) return 100 + tickets;
+  if (unlocked) return 40;
+  return 0;
+}
+
+function poolExperienceCue(pool, candidates, unlocked) {
+  const tickets = Number(state.tickets?.[pool.key] || 0);
+  if (!unlocked) return "完成對應行程或成果後，這個卡池會亮起。";
+  if (tickets > 0) {
+    if (pool.key === "result") return "成果券最容易讓覺醒素材與高階夥伴有感。";
+    if (pool.key === "blessing") return "成交神殿池只吃委託、見面談、簽約鏈條。";
+    if (pool.key === "boosted") return "高價值行動已點亮，適合推進主寵養成。";
+    return "先把可抽次數用掉，重複卡也會變碎片。";
+  }
+  return candidates.length ? "目前已解鎖，等下一筆差額或福利抽進來。" : "卡池候選卡待內容包接入。";
+}
+
+function poolDrawButtonLabel(pool) {
+  if (pool.key === "general") return "抽補給";
+  if (pool.key === "boosted") return "抽強化";
+  if (pool.key === "result") return "抽成果種子";
+  if (pool.key === "blessing") return "進入神殿";
+  return "抽一次";
 }
 
 function todayKey(date = new Date()) {
@@ -2993,10 +3176,14 @@ async function draw(poolKey) {
   const assistText = activePetAssistText();
   const existing = getOwned(pet.pet_id);
   let resultText = "";
+  let duplicate = false;
+  let fragmentsAdded = 0;
   if (existing) {
     const gained = duplicateFragments(pet.rarity);
     existing.duplicate_fragments += gained;
     existing.owned_count += 1;
+    duplicate = true;
+    fragmentsAdded = gained;
     resultText = `重複轉成碎片 +${gained}`;
   } else {
     state.collection[pet.pet_id] = {
@@ -3023,6 +3210,8 @@ async function draw(poolKey) {
     text: `${pool.name} 抽到 ${pet.name}，${resultText}`,
     assistText,
     poolKey,
+    duplicate,
+    fragmentsAdded,
     rateMode: configuredDropRates(pool.key) ? "backend-configured" : "prototype-unweighted",
   });
   state.history = state.history.slice(0, 12);
@@ -3053,6 +3242,8 @@ async function drawCloud(poolKey) {
       text: `${pool.name} 抽到 ${pet.name || data.pet.pet_id}，${resultText}`,
       assistText: activePetAssistText(),
       poolKey,
+      duplicate: Boolean(data.duplicate),
+      fragmentsAdded: rewardCount(data.fragments_added),
       rateMode: "cloud",
     });
     state.history = state.history.slice(0, 12);
@@ -3288,25 +3479,25 @@ function renderEntrySummon() {
   const settled = Boolean(state.dailySettlements?.[todayKey()]?.awarded);
   const tickets = totalTickets();
   const streak = state.settlementStreak?.count || 0;
-  const primaryAction = settled && tickets > 0
-    ? `<button class="primary-button" type="button" data-view="gacha">去抽卡</button>`
-    : `<button class="primary-button" type="button" data-view="today">${settled ? "更新今日" : "結算今日"}</button>`;
+  const cue = buildEntryExperienceCue();
+  const secondaryView = cue.view === "collection" ? "gacha" : "collection";
+  const secondaryLabel = secondaryView === "gacha" ? "看抽卡額度" : "看卡片庫";
   summon.innerHTML = `
-    <div class="summon-copy">
-      <span class="summon-kicker">今日召喚</span>
-      <strong>${escapeHtml(PROFILE.agent)}，${settled ? "今天的夥伴已醒來" : "先喚醒你的房仲精靈"}</strong>
-      <p>累積越多，抽卡項目會越亮；精確倍率等後端設定後再顯示。</p>
+    <div class="summon-copy summon-tone-${escapeHtml(cue.tone)}">
+      <span class="summon-kicker">${escapeHtml(cue.kicker)}</span>
+      <strong>${escapeHtml(cue.title)}</strong>
+      <p>${escapeHtml(cue.detail)}</p>
+      <span class="assist-line">${escapeHtml(activePetAssistText(pet, owned))}</span>
     </div>
     <div class="summon-status">
       <span class="material-pill">${settled ? "今日已結算" : "待結算"}</span>
       <span class="soft-pill">可抽 ${tickets} 次</span>
       <span class="soft-pill">連續 ${streak} 天</span>
       <span class="soft-pill">${escapeHtml(currentForm(pet, owned))} Lv.${owned?.level || 1}</span>
-      <span class="soft-pill">${escapeHtml(activePetAssistText(pet, owned).replace("主寵助力：", ""))}</span>
     </div>
     <div class="summon-actions">
-      ${primaryAction}
-      <button class="secondary-button" type="button" data-view="collection">看卡片庫</button>
+      <button class="primary-button" type="button" data-view="${escapeHtml(cue.view)}">${escapeHtml(cue.label)}</button>
+      <button class="secondary-button" type="button" data-view="${secondaryView}">${secondaryLabel}</button>
     </div>
   `;
 }
@@ -3336,6 +3527,16 @@ function renderProgressDashboard() {
 
   const periodPill = document.getElementById("progressPeriodPill");
   if (periodPill) periodPill.textContent = progress.period || currentPeriodKey();
+  const pet = getActivePet();
+  const owned = getOwned(pet.pet_id);
+  const growthFocus = buildGrowthFocus(pet, owned);
+  const awakenFocus = buildAwakenFocus(pet, owned);
+  const drawFocus = {
+    title: "抽卡刺激",
+    detail: totalTickets() > 0 ? `${compactTicketText()}，先把今天能抽的抽掉。` : "目前沒有可抽券，完成行程或成果後會亮起卡池。",
+    value: `${totalTickets()} 次`,
+    tone: totalTickets() > 0 ? "hot" : "soft",
+  };
 
   target.innerHTML = `
     <article class="progress-hero-card${dreamClass}">
@@ -3344,6 +3545,17 @@ function renderProgressDashboard() {
       <p>有效 / 全部組數。${escapeHtml(eEffectiveMilestone)}</p>
       ${progress.main.dreamDone ? `<span class="celebration-pill">E 全部達 ${formatMetricValue(progress.main.total)}，夢幻高標！</span>` : `<span class="soft-pill">E 全部 6 是爆發慶祝，不是每日壓力</span>`}
     </article>
+    <div class="progress-focus-grid">
+      ${[growthFocus, awakenFocus, drawFocus].map((focus) => `
+        <article class="progress-focus-card is-${escapeHtml(focus.tone)}">
+          <div class="team-topline">
+            <strong>${escapeHtml(focus.title)}</strong>
+            <span>${escapeHtml(focus.value)}</span>
+          </div>
+          <p>${escapeHtml(focus.detail)}</p>
+        </article>
+      `).join("")}
+    </div>
     <article class="progress-card">
       <div class="team-topline"><strong>${escapeHtml(progress.highValue.label)}</strong><span>${formatMetricValue(progress.highValue.current)} / >${progress.highValue.target}</span></div>
       <div class="bar"><span style="width:${highPercent}%"></span></div>
@@ -3529,25 +3741,57 @@ function renderRewardAction() {
 
 function renderPools() {
   document.getElementById("ticketSummary").textContent = `券 ${totalTickets()}`;
-  document.getElementById("poolGrid").innerHTML = POOLS.map((pool) => {
+  document.getElementById("poolGrid").innerHTML = [...POOLS].sort((left, right) => poolPriority(right) - poolPriority(left)).map((pool) => {
     const candidates = poolCandidates(pool);
     const unlocked = poolUnlocked(pool);
+    const ready = unlocked && Number(state.tickets[pool.key] || 0) > 0 && candidates.length > 0;
     return `
-      <article class="pool-card ${unlocked ? "" : "is-locked"}">
+      <article class="pool-card ${unlocked ? "" : "is-locked"} ${ready ? "is-ready" : ""}">
         <div class="team-topline">
           <h3>${pool.name}</h3>
           <span>${state.tickets[pool.key] || 0} 張</span>
         </div>
         <p class="small-text">${pool.source}</p>
-        <p class="assist-line">${escapeHtml(pool.unlockText)}</p>
+        <p class="assist-line">${escapeHtml(poolExperienceCue(pool, candidates, unlocked))}</p>
         <div class="pool-meta">
           ${rarityDisplayText(pool)}
           <span class="soft-pill">${candidates.length} 張候選卡</span>
+          <span class="soft-pill">${escapeHtml(activePetAssistText().replace("主寵助力：", ""))}</span>
         </div>
-        <button class="primary-button" type="button" data-draw="${pool.key}" ${state.tickets[pool.key] <= 0 || !unlocked || !candidates.length ? "disabled" : ""}>抽一次</button>
+        <button class="primary-button" type="button" data-draw="${pool.key}" ${state.tickets[pool.key] <= 0 || !unlocked || !candidates.length ? "disabled" : ""}>${escapeHtml(poolDrawButtonLabel(pool))}</button>
       </article>
     `;
   }).join("");
+}
+
+function drawOutcomeTone(draw, pet) {
+  if (draw?.duplicate) return "duplicate";
+  if (pet?.rarity === "SSR" || pet?.rarity === "UR") return "rare";
+  if (pet?.rarity === "SR") return "shine";
+  return "new";
+}
+
+function drawOutcomeLabel(draw, pet) {
+  if (draw?.duplicate) return `重複轉碎片 +${rewardCount(draw.fragmentsAdded)}`;
+  if (pet?.rarity === "SSR" || pet?.rarity === "UR") return "稀有夥伴加入";
+  return "新夥伴加入";
+}
+
+function drawNextAction(draw, pet, owned) {
+  if (draw?.duplicate && owned && owned.star < 5 && owned.duplicate_fragments >= starCost(owned.star + 1)) {
+    return { kind: "star", label: "去升星", petId: pet.pet_id };
+  }
+  if (pet && owned && canAwaken(pet, owned)) return { kind: "awaken", label: "去覺醒", petId: pet.pet_id };
+  if (draw?.poolKey && Number(state.tickets?.[draw.poolKey] || 0) > 0) return { kind: "draw", label: "再抽一次", poolKey: draw.poolKey };
+  return { kind: "view", label: "看卡片庫", view: "collection" };
+}
+
+function drawNextActionMarkup(action) {
+  if (!action) return "";
+  if (action.kind === "star") return `<button class="primary-button" type="button" data-star="${escapeHtml(action.petId)}">${escapeHtml(action.label)}</button>`;
+  if (action.kind === "awaken") return `<button class="primary-button" type="button" data-awaken="${escapeHtml(action.petId)}">${escapeHtml(action.label)}</button>`;
+  if (action.kind === "draw") return `<button class="primary-button" type="button" data-draw="${escapeHtml(action.poolKey)}">${escapeHtml(action.label)}</button>`;
+  return `<button class="primary-button" type="button" data-view="${escapeHtml(action.view || "collection")}">${escapeHtml(action.label)}</button>`;
 }
 
 function renderDrawResult() {
@@ -3559,18 +3803,24 @@ function renderDrawResult() {
   }
   const pet = getPet(lastDraw.petId);
   const flavor = petFlavorText(pet);
+  const owned = pet ? getOwned(pet.pet_id) : null;
+  const tone = drawOutcomeTone(lastDraw, pet);
+  const nextAction = drawNextAction(lastDraw, pet, owned);
   target.innerHTML = `
-    <article class="draw-result-card">
+    <article class="draw-result-card draw-tone-${escapeHtml(tone)}">
       <div class="mini-pet">${petVisual(pet, getOwned(pet.pet_id), "small")}</div>
       <div>
+        <span class="summon-kicker">抽卡結果</span>
         <div class="pet-name-row">
           <h3>${pet.name}</h3>
           <span class="rarity-badge rarity-${pet.rarity}">${pet.rarity}</span>
+          <span class="collection-badge is-ready">${escapeHtml(drawOutcomeLabel(lastDraw, pet))}</span>
         </div>
         ${flavor ? `<p class="pet-flavor">「${escapeHtml(flavor)}」</p>` : ""}
         <p class="small-text">${lastDraw.text}</p>
         ${lastDraw.assistText ? `<p class="assist-line">${escapeHtml(lastDraw.assistText)}</p>` : ""}
         <div class="draw-share-row">
+          ${drawNextActionMarkup(nextAction)}
           <button class="secondary-button" type="button" data-view="collection">看卡片庫</button>
           <button class="secondary-button" type="button" data-share-draw="1">分享結果</button>
           <a class="secondary-button line-share-link" href="${escapeHtml(buildLineShareUrl(buildDrawShareText(lastDraw)))}" target="_blank" rel="noopener" data-line-share-draw="1">LINE分享</a>
@@ -3591,8 +3841,14 @@ function buildDrawShareText(draw = state.history.find((item) => item.type === "d
   const pet = getPet(draw.petId);
   const petText = pet ? `${pet.rarity} ${pet.name}` : "新夥伴";
   const subtitle = pet?.line_subtitle || pet?.card_effect_summary || "行程養寵物，成果拿覺醒素材。";
+  const outcome = draw.duplicate
+    ? `重複卡轉成 ${rewardCount(draw.fragmentsAdded)} 碎片，下一次升星又近一點。`
+    : pet?.rarity === "SSR"
+      ? "成交神殿有回應，今天這抽有感。"
+      : "新夥伴加入卡片庫。";
   return [
-    `${PROFILE.branch} ${PROFILE.agent} 在房仲精靈抽到 ${petText}！`,
+    `${PROFILE.branch} ${PROFILE.agent} 在房仲精靈抽到 ${petText}。`,
+    outcome,
     subtitle,
     draw.assistText || "",
     "累積推進抽卡，委託/見面談/簽約推進成交神殿。",
@@ -3778,35 +4034,40 @@ function renderInventoryBag() {
   const grid = document.getElementById("bagGrid");
   const resetCard = document.getElementById("resetRuleCard");
   if (!grid) return;
-  const tickets = Object.entries(state.tickets || {}).filter(([, value]) => Number(value || 0) > 0);
+  const tickets = ticketEntries();
   const materials = materialGainEntries(state.materials || {});
   const ownedCount = ownedCurrentPetCount();
   const fragmentTotal = collectionFragmentTotal();
+  const actionable = findFirstActionableCollection();
   if (summary) summary.textContent = `${totalTickets()} 券 · ${materials.length} 種素材`;
   const sections = [
     {
-      title: "抽卡券",
-      detail: tickets.length ? tickets.map(([key, value]) => `${ticketLabel(key)} ${value}`).join(" · ") : "目前沒有抽卡券",
-      meta: "由行程、成果或活動累積；每日免費抽當天未用就消失。",
+      title: "今天先檢查",
+      detail: totalTickets() > 0 ? `可抽 ${totalTickets()} 次` : "目前沒有可抽券",
+      meta: "含報表卡點、免費抽或加碼；免費抽若已發放，今天未用不保留。",
+      tone: totalTickets() > 0 ? "hot" : "soft",
     },
     {
-      title: "素材",
-      detail: materials.length ? materials.map(([key, value]) => `${materialLabel(key)} ${value}`).join(" · ") : "目前沒有素材",
+      title: "現在可用",
+      detail: actionable ? actionable.text : (tickets.length ? compactTicketText(tickets) : "暫無立即操作"),
+      meta: actionable ? "先把碎片或素材變成寵物進度。" : "有券就抽，有素材就整理卡片庫。",
+      tone: actionable ? "hot" : "growth",
+    },
+    {
+      title: "長期累積",
+      detail: materials.length ? materials.slice(0, 4).map(([key, value]) => `${materialLabel(key)} ${value}`).join(" · ") : "目前沒有素材",
       meta: "委託、見面談、簽約等真實成果推進覺醒與成熟合成。",
+      tone: "soft",
     },
     {
-      title: "碎片",
-      detail: `${fragmentTotal} 片`,
-      meta: "重複卡會轉成碎片，用於升星與合成。",
-    },
-    {
-      title: "卡片庫",
-      detail: `${ownedCount} / ${PETS.length} 種`,
-      meta: "第一版只顯示 5 條開放故事線。",
+      title: "收藏進度",
+      detail: `${ownedCount} / ${PETS.length} 種 · 碎片 ${fragmentTotal}`,
+      meta: "重複卡會轉成碎片，碎片可以升星與合成。",
+      tone: "growth",
     },
   ];
   grid.innerHTML = sections.map((section) => `
-    <article class="bag-card">
+    <article class="bag-card is-${escapeHtml(section.tone)}">
       <span class="summon-kicker">${escapeHtml(section.title)}</span>
       <strong>${escapeHtml(section.detail)}</strong>
       <p>${escapeHtml(section.meta)}</p>
@@ -3836,6 +4097,31 @@ function renderStorylineFilter() {
   }).join("");
 }
 
+function renderCollectionActionStrip() {
+  const target = document.getElementById("collectionActionStrip");
+  if (!target) return;
+  const action = findFirstActionableCollection();
+  const ownedCount = ownedCurrentPetCount();
+  if (!action) {
+    target.innerHTML = `
+      <article class="collection-action-card">
+        <span class="summon-kicker">卡片庫下一步</span>
+        <strong>${ownedCount ? "先累積碎片與素材" : "先抽到第一批夥伴"}</strong>
+        <p>${ownedCount ? "抽到重複卡會變碎片；委託、見面談、簽約會讓覺醒素材增加。" : "去抽卡後，這裡會優先顯示可升星、可覺醒的卡。"}</p>
+      </article>
+    `;
+    return;
+  }
+  target.innerHTML = `
+    <article class="collection-action-card is-hot">
+      <span class="summon-kicker">卡片庫下一步</span>
+      <strong>${escapeHtml(action.text)}</strong>
+      <p>目前最值得先處理的是 ${escapeHtml(action.pet.name)}，處理完再回來抽卡或看成果。</p>
+      <button class="primary-button" type="button" data-${action.type === "star" ? "star" : action.type === "awaken" ? "awaken" : action.type === "ultimate" ? "ultimate" : "view"}="${escapeHtml(action.type === "material-ready" ? "collection" : action.pet.pet_id)}">${escapeHtml(action.label)}</button>
+    </article>
+  `;
+}
+
 function collectionActionState(pet, owned = getOwned(pet.pet_id)) {
   if (!owned) return { badges: [], score: 0 };
   const nextCost = owned.star < 5 ? starCost(owned.star + 1) : 0;
@@ -3845,12 +4131,17 @@ function collectionActionState(pet, owned = getOwned(pet.pet_id)) {
     pet.available_forms.includes("覺醒型") &&
     Object.keys(pet.required_awaken_materials || {}).length > 0 &&
     hasMaterials(pet.required_awaken_materials);
+  const missingAwaken = missingMaterials(pet.required_awaken_materials || {});
+  const materialNearly = !owned.awakened && pet.available_forms.includes("覺醒型") && missingAwaken.length > 0 && missingAwaken.reduce((sum, item) => sum + item.missing, 0) <= 1;
+  const fragmentGap = owned.star < 5 ? Math.max(0, nextCost - owned.duplicate_fragments) : 0;
   const ultimateReady = canUltimate(pet, owned);
   const badges = [];
   if (pet.pet_id === state.activePetId) badges.push({ label: "主寵", tone: "focus" });
   if (canStar) badges.push({ label: "可升星", tone: "ready" });
+  else if (owned.star < 5 && fragmentGap > 0 && fragmentGap <= 3) badges.push({ label: "只差碎片", tone: "soft" });
   if (awakenReady) badges.push({ label: "可覺醒", tone: "ready" });
   else if (materialReady) badges.push({ label: "素材已足", tone: "soft" });
+  else if (materialNearly) badges.push({ label: "素材快足", tone: "soft" });
   if (ultimateReady) badges.push({ label: "可究極", tone: "ready" });
   return {
     badges,
@@ -3860,6 +4151,8 @@ function collectionActionState(pet, owned = getOwned(pet.pet_id)) {
       (ultimateReady ? 70 : 0) +
       (canStar ? 60 : 0) +
       (materialReady ? 40 : 0) +
+      (materialNearly ? 30 : 0) +
+      (fragmentGap > 0 && fragmentGap <= 3 ? 20 : 0) +
       (owned ? 10 : 0),
   };
 }
@@ -3877,6 +4170,7 @@ function renderCollection() {
   ensureCollectionStoryline();
   renderCollectionSummary();
   renderStorylineFilter();
+  renderCollectionActionStrip();
   const visiblePets = PETS
     .filter((pet) => pet.storyline_id === activeCollectionStorylineId)
     .map((pet, index) => ({ pet, index, action: collectionActionState(pet) }))

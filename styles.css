@@ -214,7 +214,10 @@ h3 {
   padding: 12px;
   border: 1px solid rgba(32, 53, 85, 0.14);
   border-radius: 8px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(241, 247, 252, 0.92));
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(241, 247, 252, 0.92)),
+    radial-gradient(circle at 94% 18%, rgba(212, 95, 69, 0.18), transparent 24%);
+  box-shadow: 0 12px 26px rgba(24, 32, 45, 0.08);
 }
 
 .summon-copy {
@@ -241,6 +244,19 @@ h3 {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.45;
+}
+
+.summon-tone-hot .summon-kicker,
+.summon-tone-hot strong {
+  color: #a4422f;
+}
+
+.summon-tone-growth .summon-kicker {
+  color: var(--cyan);
+}
+
+.summon-tone-ready .summon-kicker {
+  color: var(--green);
 }
 
 .assist-line {
@@ -878,7 +894,23 @@ h3 {
   background: #f8fafc;
 }
 
+.bag-card.is-hot,
+.pool-card.is-ready {
+  border-color: rgba(212, 95, 69, 0.34);
+  background: linear-gradient(180deg, #fffaf4 0%, #ffffff 100%);
+}
+
+.bag-card.is-growth {
+  border-color: rgba(36, 127, 150, 0.26);
+  background: #f2f9fb;
+}
+
+.pool-card.is-ready {
+  box-shadow: 0 10px 24px rgba(212, 95, 69, 0.12);
+}
+
 .progress-dashboard,
+.progress-focus-grid,
 .manager-grid,
 .manager-status-grid,
 .cardgame-actions,
@@ -893,22 +925,69 @@ h3 {
 }
 
 .progress-hero-card,
+.progress-focus-card,
 .progress-card,
 .manager-card,
 .cardgame-card,
-.manager-drop-zone {
+.manager-drop-zone,
+.collection-action-card {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
 }
 
 .progress-hero-card,
+.progress-focus-card,
 .progress-card,
 .manager-card,
-.cardgame-card {
+.cardgame-card,
+.collection-action-card {
   display: grid;
   gap: 10px;
   padding: 14px;
+}
+
+.progress-focus-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.progress-focus-card {
+  min-height: 112px;
+  background: #fbfcfd;
+}
+
+.progress-focus-card strong,
+.collection-action-card strong {
+  color: var(--navy);
+  line-height: 1.3;
+}
+
+.progress-focus-card span {
+  color: var(--green);
+  font-weight: 900;
+}
+
+.progress-focus-card p,
+.collection-action-card p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.progress-focus-card.is-hot,
+.collection-action-card.is-hot {
+  border-color: rgba(212, 95, 69, 0.34);
+  background: linear-gradient(180deg, #fffaf4 0%, #ffffff 100%);
+}
+
+.progress-focus-card.is-growth {
+  border-color: rgba(36, 127, 150, 0.26);
+  background: #f2f9fb;
+}
+
+.progress-focus-card.is-ready {
+  border-color: rgba(22, 132, 90, 0.28);
+  background: #edf8f2;
 }
 
 .progress-hero-card strong {
@@ -1177,6 +1256,16 @@ body:not(.is-manager-mode) .manager-dashboard {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.collection-action-strip {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.collection-action-card .primary-button {
+  width: fit-content;
+}
+
 .storyline-button {
   min-height: 38px;
   border: 1px solid var(--line);
@@ -1199,6 +1288,34 @@ body:not(.is-manager-mode) .manager-dashboard {
   gap: 12px;
   align-items: center;
   padding: 12px;
+  position: relative;
+  overflow: hidden;
+  animation: result-reveal 360ms ease-out both;
+}
+
+.draw-result-card::before {
+  content: "";
+  position: absolute;
+  inset: -40%;
+  background: radial-gradient(circle, rgba(255, 229, 168, 0.32), transparent 48%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.draw-tone-rare::before,
+.draw-tone-shine::before {
+  opacity: 1;
+  animation: result-flash 760ms ease-out both;
+}
+
+.draw-tone-rare {
+  border-color: rgba(184, 130, 23, 0.45);
+  background: linear-gradient(135deg, #fff7df, #ffffff 64%);
+}
+
+.draw-tone-duplicate {
+  border-color: rgba(36, 127, 150, 0.28);
+  background: #f2f9fb;
 }
 
 .draw-share-row {
@@ -1215,6 +1332,26 @@ body:not(.is-manager-mode) .manager-dashboard {
   font-weight: 900;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+@keyframes result-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes result-flash {
+  from {
+    transform: rotate(0deg) scale(0.7);
+  }
+  to {
+    transform: rotate(18deg) scale(1.08);
+  }
 }
 
 .mini-pet {
@@ -1337,9 +1474,11 @@ body:not(.is-manager-mode) .manager-dashboard {
   .metrics-grid,
   .manager-grid,
   .manager-status-grid,
+  .progress-focus-grid,
   .manual-report,
   .collection-grid,
   .storyline-filter,
+  .bag-grid,
   .daily-quest-list,
   .daily-achievement-list,
   .reward-strip {
