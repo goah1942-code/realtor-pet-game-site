@@ -27,13 +27,29 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="app-shell">
+    <section id="loginScreen" class="login-screen" hidden>
+      <form id="employeeLoginForm" class="login-card" autocomplete="off">
+        <img src="./assets/app-icon-192.png" alt="" class="login-icon" />
+        <p class="eyebrow">房仲精靈</p>
+        <h1>輸入員工編號</h1>
+        <p>第一次登入後，這台瀏覽器會記住你的員編。</p>
+        <label>
+          <span>員工編號</span>
+          <input id="employeeIdInput" name="employeeId" type="text" inputmode="text" autocomplete="username" required />
+        </label>
+        <button class="primary-button" type="submit">進入遊戲</button>
+        <p id="loginStatus" class="backup-status" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <main id="appShell" class="app-shell">
       <header class="topbar">
         <div>
           <p class="eyebrow" id="branchLabel">樹林店</p>
           <h1>房仲精靈</h1>
         </div>
         <div class="topbar-actions">
+          <button id="switchEmployeeBtn" class="secondary-button" type="button">更換員編</button>
           <button id="backupBtn" class="icon-button" type="button" title="匯出進度備份" aria-label="匯出進度備份">⇩</button>
           <button id="restoreBtn" class="icon-button" type="button" title="匯入進度備份" aria-label="匯入進度備份">⇧</button>
           <button id="resetBtn" class="icon-button" type="button" title="重置示範資料" aria-label="重置示範資料">↺</button>
@@ -49,89 +65,24 @@
       </section>
 
       <nav class="tabbar" aria-label="主要功能">
-        <button class="tab-button is-active" type="button" data-view="today">今日</button>
-        <button class="tab-button" type="button" data-view="gacha">抽卡</button>
+        <button class="tab-button is-active" type="button" data-view="today">成果累積</button>
+        <button class="tab-button" type="button" data-view="gacha">抽卡額度</button>
         <button class="tab-button" type="button" data-view="collection">卡片庫</button>
-        <button class="tab-button" type="button" data-view="team">團隊</button>
+        <button class="tab-button" type="button" data-view="bag">背包</button>
+        <button class="tab-button" type="button" data-view="cardgame">卡牌遊戲</button>
       </nav>
 
       <section id="view-today" class="view-panel is-active">
         <div class="section-heading">
-          <h2>今日結算</h2>
-          <button id="sampleReportBtn" class="primary-button" type="button">匯入範例</button>
+          <h2>成果累積</h2>
+          <span id="progressPeriodPill" class="soft-pill"></span>
         </div>
 
-        <div class="import-panel">
-          <label class="file-picker">
-            <input id="csvInput" type="file" accept=".csv,text/csv" />
-            <span>上傳 CSV</span>
-          </label>
-          <p>支援 A/B/C/D、電話量、成果欄位，也可吃募集線、D1、募轉追、二附以上、成件/簽約金等報表欄位。</p>
-        </div>
-
-        <form id="manualReportForm" class="manual-report" autocomplete="off">
-          <label>
-            <span>資料月份</span>
-            <input type="month" name="period" />
-          </label>
-          <label>
-            <span>A 商圈</span>
-            <input type="number" inputmode="numeric" min="0" step="1" name="area" value="0" />
-          </label>
-          <label>
-            <span>B 開發</span>
-            <input type="number" inputmode="numeric" min="0" step="1" name="development" value="0" />
-          </label>
-          <label>
-            <span>C 議價</span>
-            <input type="number" inputmode="numeric" min="0" step="1" name="negotiation" value="0" />
-          </label>
-          <label>
-            <span>D 帶看</span>
-            <input type="number" inputmode="numeric" min="0" step="1" name="showing" value="0" />
-          </label>
-          <label>
-            <span>電話量</span>
-            <input type="number" inputmode="numeric" min="0" step="1" name="calls" value="0" />
-          </label>
-          <label>
-            <span>前置信號</span>
-            <input type="number" inputmode="numeric" min="0" step="1" name="momentum" value="0" />
-          </label>
-          <label>
-            <span>委託</span>
-            <input type="number" inputmode="numeric" min="0" step="1" name="listing" value="0" />
-          </label>
-          <label>
-            <span>斡旋</span>
-            <input type="number" inputmode="numeric" min="0" step="1" name="offer" value="0" />
-          </label>
-          <label>
-            <span>改附表</span>
-            <input type="number" inputmode="numeric" min="0" step="1" name="price" value="0" />
-          </label>
-          <label>
-            <span>見面談</span>
-            <input type="number" inputmode="numeric" min="0" step="1" name="meeting" value="0" />
-          </label>
-          <label>
-            <span>簽約</span>
-            <input type="number" inputmode="numeric" min="0" step="1" name="contract" value="0" />
-          </label>
-          <button id="manualSubmitBtn" class="primary-button manual-submit" type="submit">結算今日</button>
-        </form>
+        <div id="progressDashboard" class="progress-dashboard"></div>
         <div class="daily-status" id="dailyStatus"></div>
-
-        <div class="pet-wish" id="petWish"></div>
-
-        <div class="daily-quest-list" id="dailyQuestList"></div>
-
         <div class="metrics-grid" id="metricsGrid"></div>
-
         <div class="reward-strip" id="rewardStrip"></div>
-
         <div class="daily-achievement-list" id="dailyAchievementList" aria-live="polite"></div>
-
         <div class="reward-action-bar" id="rewardActionBar"></div>
       </section>
 
@@ -155,14 +106,121 @@
         <div class="collection-grid" id="collectionGrid"></div>
       </section>
 
-      <section id="view-team" class="view-panel">
+      <section id="view-bag" class="view-panel">
         <div class="section-heading">
-          <h2>店內任務</h2>
-          <span class="soft-pill">共同進度</span>
+          <h2>背包</h2>
+          <span id="bagSummary" class="soft-pill"></span>
         </div>
 
-        <div class="team-contribution" id="teamContribution"></div>
-        <div class="team-list" id="teamList"></div>
+        <div class="bag-grid" id="bagGrid"></div>
+        <div class="reset-rule-card" id="resetRuleCard"></div>
+      </section>
+
+      <section id="view-cardgame" class="view-panel">
+        <div class="section-heading">
+          <h2>卡牌遊戲</h2>
+          <span class="soft-pill">可接後端規則</span>
+        </div>
+
+        <div class="cardgame-board" id="cardGameBoard"></div>
+      </section>
+
+      <section id="managerDashboard" class="manager-dashboard" hidden>
+        <div class="section-heading">
+          <h2>店長儀表板</h2>
+          <span class="soft-pill">不顯示公開個人排名</span>
+        </div>
+
+        <div class="manager-grid">
+          <article class="manager-card">
+            <div class="team-topline">
+              <strong>團隊任務</strong>
+              <button id="teamMissionToggle" class="secondary-button" type="button">未開始</button>
+            </div>
+            <p class="small-text">第一版只顯示狀態，不做公開個人排名。</p>
+          </article>
+          <article class="manager-card">
+            <div class="team-topline">
+              <strong>額外加碼</strong>
+              <button id="bonusToggle" class="secondary-button" type="button">未加碼</button>
+            </div>
+            <p class="small-text">倍率與加碼規則待後端/店長設定，這裡先保留 placeholder。</p>
+          </article>
+          <article class="manager-card">
+            <div class="team-topline">
+              <strong>臨時任務</strong>
+              <button id="temporaryTaskToggle" class="secondary-button" type="button">未開啟</button>
+            </div>
+            <p class="small-text">先保留任務開關，之後可指定當日故事碎片與額外抽卡次數。</p>
+          </article>
+        </div>
+
+        <label id="managerDropZone" class="manager-drop-zone">
+          <input id="csvInput" type="file" accept=".csv,text/csv,.txt,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" />
+          <strong>拖移每日報表到這裡</strong>
+          <span>可先接 CSV；Excel/Google Sheet 由後端拆解後餵同一份資料接口。</span>
+        </label>
+
+        <form id="cloudImportForm" class="cloud-import-form" autocomplete="off">
+          <label>
+            <span>雲端報表 Google Sheet ID</span>
+            <input id="cloudImportSheetId" name="spreadsheetId" type="text" placeholder="貼上已轉成 Google Sheet 的 ID" />
+          </label>
+          <div class="cloud-import-actions">
+            <button id="cloudPreviewBtn" class="secondary-button" type="button">預覽匯入</button>
+            <button id="cloudCommitBtn" class="primary-button" type="button" disabled>確認入帳</button>
+          </div>
+          <p id="cloudImportStatus" class="backup-status" aria-live="polite"></p>
+        </form>
+
+        <form id="manualReportForm" class="manual-report manager-manual-report" autocomplete="off">
+          <label>
+            <span>資料月份</span>
+            <input type="month" name="period" />
+          </label>
+          <label>
+            <span>A 商圈</span>
+            <input type="number" inputmode="numeric" min="0" step="0.1" name="area" value="0" />
+          </label>
+          <label>
+            <span>B 開發</span>
+            <input type="number" inputmode="numeric" min="0" step="0.1" name="development" value="0" />
+          </label>
+          <label>
+            <span>C 議價</span>
+            <input type="number" inputmode="numeric" min="0" step="0.1" name="negotiation" value="0" />
+          </label>
+          <label>
+            <span>D 帶看</span>
+            <input type="number" inputmode="numeric" min="0" step="0.1" name="showing" value="0" />
+          </label>
+          <label>
+            <span>電話量</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name="calls" value="0" />
+          </label>
+          <label>
+            <span>委託</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name="listing" value="0" />
+          </label>
+          <label>
+            <span>見面談</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name="meeting" value="0" />
+          </label>
+          <label>
+            <span>簽約</span>
+            <input type="number" inputmode="numeric" min="0" step="1" name="contract" value="0" />
+          </label>
+          <button id="sampleReportBtn" class="secondary-button" type="button">套用範例狀態</button>
+          <button id="manualSubmitBtn" class="primary-button manual-submit" type="submit">匯入到雛形</button>
+        </form>
+
+        <div class="manager-status-grid">
+          <div class="team-contribution" id="teamContribution"></div>
+          <div class="manager-temporary-tasks" id="managerTemporaryTasks"></div>
+          <div class="manager-leaderboard" id="managerLeaderboard"></div>
+          <div class="manager-tracking" id="managerTracking"></div>
+          <div class="manager-collection" id="managerCollection"></div>
+        </div>
       </section>
     </main>
 

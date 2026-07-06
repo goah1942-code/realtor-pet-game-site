@@ -1,6 +1,24 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v1";
+const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
+const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
+const MANAGER_MODE = readManagerMode();
+const ACTIVE_STORYLINE_IDS = new Set([
+  "development",
+  "sl_development_expedition",
+  "call",
+  "sl_call_signal_tower",
+  "showing",
+  "sl_showing_route",
+  "listing",
+  "sl_listing_seed_garden",
+  "contract",
+  "sl_contract_team_sanctum",
+]);
+const CONTRACT_TEMPLE_STORYLINE_IDS = new Set(["contract", "sl_contract_team_sanctum"]);
 const PROFILE = readEntryProfile();
 const STORAGE_KEY = `${LEGACY_STORAGE_KEY}:${PROFILE.userKey}`;
+const CLOUD_API_BASE_URL = readCloudApiBaseUrl();
+captureCloudManagerKeyFromUrl();
 
 let PETS = [
   {
@@ -202,43 +220,48 @@ const MATERIAL_DISPLAY_ORDER = [
 const POOLS = [
   {
     key: "general",
-    name: "一般行程池",
+    name: "探索補給池",
     ticketName: "一般券",
-    source: "電話、商圈、開發",
-    odds: { N: 74, R: 26 },
+    source: "E 累積、電話信號",
+    unlockText: "登入即可累積，E 全部越高越容易開更多池",
+    allowedStorylines: ["sl_development_expedition", "sl_call_signal_tower", "sl_showing_route", "sl_listing_seed_garden", "development", "call", "showing", "listing"],
+    rarityBands: ["N", "R"],
   },
   {
     key: "boosted",
-    name: "強化行程池",
+    name: "高價值行動池",
     ticketName: "強化行程券",
-    source: "A/B/C/D 達標",
-    odds: { N: 55, R: 37, SR: 8 },
+    source: "B+C+D 有效組數推進",
+    unlockText: "B+C+D 有效 > 4 後應有更明顯的解鎖感",
+    allowedStorylines: ["sl_development_expedition", "sl_showing_route", "sl_listing_seed_garden", "development", "showing", "listing"],
+    rarityBands: ["N", "R", "SR"],
   },
   {
     key: "result",
-    name: "成果池",
+    name: "成果種子池",
     ticketName: "成果券",
-    source: "委託、斡旋、改價、見面談",
-    odds: { R: 65, SR: 33, SSR: 2 },
+    source: "委託、見面談、簽約",
+    unlockText: "成交神殿只吃委託 / 見面談 / 簽約，不吃一般行程",
+    allowedStorylines: ["sl_listing_seed_garden", "sl_contract_team_sanctum", "listing", "contract"],
+    rarityBands: ["R", "SR", "SSR"],
   },
   {
     key: "blessing",
-    name: "簽約祝福池",
+    name: "成交神殿池",
     ticketName: "簽約祝福券",
-    source: "簽約",
-    odds: { SR: 95, SSR: 5 },
+    source: "委託、見面談、簽約核心進度",
+    unlockText: "只從成交神殿成果來源開啟，倍率待後端設定",
+    allowedStorylines: ["sl_contract_team_sanctum", "contract"],
+    rarityBands: ["SR", "SSR"],
   },
 ];
 
 const RARITY_ORDER = ["N", "R", "SR", "SSR", "UR"];
-const FORM_ASSIST_BOOST = {
-  初生型: 1,
-  成長型: 2,
-  王牌型: 3,
-  覺醒型: 5,
-  究極型: 8,
+const GACHA_CONFIG_INTERFACE = {
+  dropRates: "由後端提供，例如 { general: { N: 70, R: 30 } }；未提供時 UI 不顯示精確掉落率。",
+  assistRules: "由後端提供主寵助力倍率或稀有感應規則；未提供時只顯示已開啟狀態。",
+  poolUnlocks: "由後端提供各池解鎖門檻；前端第一版只呈現進度與 placeholder。",
 };
-const RARITY_ASSIST_BOOST = { N: 0, R: 0, SR: 1, SSR: 2, UR: 3 };
 
 const PET_WISH_RULES = [
   {
@@ -430,18 +453,6 @@ const DAILY_ACHIEVEMENTS = [
     check: ({ metrics }) => rewardCount(metrics.listing) > 0,
   },
   {
-    key: "offer",
-    title: "斡旋紅線",
-    detail: "拿到斡旋火花",
-    check: ({ metrics }) => rewardCount(metrics.offer) > 0,
-  },
-  {
-    key: "price",
-    title: "價格鍛造",
-    detail: "議價或改附表有推進",
-    check: ({ metrics }) => metrics.negotiation + metrics.price > 0,
-  },
-  {
     key: "showing",
     title: "帶看路線",
     detail: "帶看或見面談有推進",
@@ -461,14 +472,114 @@ const DAILY_ACHIEVEMENTS = [
   },
 ];
 
+PETS = filterRuntimePets(PETS);
+STORYLINES = filterRuntimeStorylines(STORYLINES);
+
 const state = loadState();
+
+function readManagerMode() {
+  const search = typeof location === "object" && typeof location.search === "string" ? location.search : "";
+  const params = typeof URLSearchParams === "function" ? new URLSearchParams(search) : null;
+  if (!params) return false;
+  return params.get("role") === "manager" || params.get("mode") === "manager" || params.get("manager") === "1";
+}
+
+function readCloudApiBaseUrl() {
+  const search = typeof location === "object" && typeof location.search === "string" ? location.search : "";
+  const params = typeof URLSearchParams === "function" ? new URLSearchParams(search) : null;
+  if (!params) return "";
+  const raw = String(params.get("api") || params.get("cloudApi") || "").trim();
+  if (!raw) return "";
+  if (raw === "mock") return "mock";
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:") return "";
+    return url.href.replace(/[?#].*$/, "").replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function readStoredEmployeeLogin() {
+  try {
+    const raw = localStorage.getItem(EMPLOYEE_LOGIN_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const employeeId = cleanEmployeeId(parsed.employeeId || parsed.userKey || "");
+    if (!employeeId) return null;
+    return {
+      branch: cleanProfileText(parsed.branch, "樹林店", 18),
+      agent: cleanProfileText(parsed.agent, `員編 ${employeeId}`, 18),
+      userKey: stableProfileKey(employeeId),
+      employeeId,
+      loginRequired: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeEmployeeLogin({ employeeId, branch = "樹林店", agent = "" }) {
+  const cleanId = cleanEmployeeId(employeeId);
+  if (!cleanId) return false;
+  const profile = {
+    employeeId: cleanId,
+    branch: cleanProfileText(branch, "樹林店", 18),
+    agent: cleanProfileText(agent || `員編 ${cleanId}`, `員編 ${cleanId}`, 18),
+  };
+  localStorage.setItem(EMPLOYEE_LOGIN_KEY, JSON.stringify(profile));
+  return true;
+}
+
+function clearEmployeeLogin() {
+  localStorage.removeItem(EMPLOYEE_LOGIN_KEY);
+}
+
+function cleanEmployeeId(value) {
+  return String(value || "").trim().replace(/[^0-9A-Za-z_-]/g, "").slice(0, 40);
+}
+
+function isFirstReleaseStoryline(storylineId) {
+  return ACTIVE_STORYLINE_IDS.has(String(storylineId || ""));
+}
+
+function isContractTempleStoryline(storylineId) {
+  return CONTRACT_TEMPLE_STORYLINE_IDS.has(String(storylineId || ""));
+}
+
+function filterRuntimePets(pets) {
+  return (Array.isArray(pets) ? pets : []).filter((pet) => isFirstReleaseStoryline(pet.storyline_id));
+}
+
+function filterRuntimeStorylines(storylines) {
+  return (Array.isArray(storylines) ? storylines : []).filter((storyline) => isFirstReleaseStoryline(storyline.storyline_id));
+}
+
+function activeStorylineLabel(storylineId) {
+  return fallbackStorylineName(storylineId);
+}
 
 function readEntryProfile() {
   const fallback = {
     branch: "樹林店",
     agent: "示範同仁",
     userKey: "demo",
+    employeeId: "",
+    loginRequired: true,
   };
+  if (MANAGER_MODE) {
+    return {
+      branch: "樹林店",
+      agent: "店長儀表板",
+      userKey: "manager",
+      employeeId: "manager",
+      loginRequired: false,
+      role: "manager",
+    };
+  }
+  const storedLogin = readStoredEmployeeLogin();
+  if (storedLogin) return storedLogin;
+
   const search = typeof location === "object" && typeof location.search === "string" ? location.search : "";
   const params = typeof URLSearchParams === "function" ? new URLSearchParams(search) : null;
   if (!params) return fallback;
@@ -477,9 +588,16 @@ function readEntryProfile() {
 
   const branch = cleanProfileText(params.get("branch"), fallback.branch, 18);
   const agent = cleanProfileText(params.get("agent") || params.get("name"), fallback.agent, 18);
-  const rawKey = cleanProfileText(params.get("uid") || params.get("user") || params.get("agentId"), "", 40);
+  const rawKey = cleanEmployeeId(params.get("uid") || params.get("user") || params.get("agentId"));
   const userKey = rawKey ? stableProfileKey(rawKey) : stableProfileKey(`${branch}-${agent}`);
-  return { branch, agent, userKey: userKey || fallback.userKey };
+  if (rawKey) writeEmployeeLogin({ employeeId: rawKey, branch, agent });
+  return {
+    branch,
+    agent,
+    userKey: userKey || fallback.userKey,
+    employeeId: rawKey,
+    loginRequired: !rawKey,
+  };
 }
 
 function cleanProfileText(value, fallback, maxLength) {
@@ -526,6 +644,93 @@ function normalizeGameMetrics(metrics = {}) {
   return Object.fromEntries(GAME_SOURCE_METRIC_KEYS.map((key) => [key, normalizeMetricValue(metrics[key])]));
 }
 
+function createReportGroups() {
+  return Object.fromEntries(GAME_SOURCE_METRIC_KEYS.map((key) => [key, { effective: 0, total: 0 }]));
+}
+
+function normalizeReportGroups(rawMetrics = {}, sourceMetrics = normalizeGameMetrics(rawMetrics)) {
+  const source = normalizeGameMetrics(sourceMetrics);
+  const groups = createReportGroups();
+  const rawGroups = isPlainObject(rawMetrics.__groups) ? rawMetrics.__groups : {};
+  GAME_SOURCE_METRIC_KEYS.forEach((key) => {
+    const rawGroup = isPlainObject(rawGroups[key]) ? rawGroups[key] : null;
+    const effective = rawGroup ? normalizeMetricValue(rawGroup.effective) : normalizeMetricValue(source[key]);
+    const total = rawGroup ? normalizeMetricValue(rawGroup.total) : effective;
+    groups[key] = {
+      effective,
+      total: Math.max(effective, total),
+    };
+  });
+  return groups;
+}
+
+function sumGroups(groups, keys, field) {
+  return keys.reduce((sum, key) => sum + normalizeMetricValue(groups?.[key]?.[field] || 0), 0);
+}
+
+function buildProgressSnapshot(rawMetrics = state?.metrics || {}, sourceMetrics = normalizeGameMetrics(rawMetrics), deltaMetrics = normalizeGameMetrics(rawMetrics)) {
+  const source = normalizeGameMetrics(sourceMetrics);
+  const delta = normalizeGameMetrics(deltaMetrics);
+  const groups = normalizeReportGroups(rawMetrics, source);
+  const mainKeys = ["area", "development", "negotiation", "showing"];
+  const highValueKeys = ["development", "negotiation", "showing"];
+  const mainEffective = sumGroups(groups, mainKeys, "effective");
+  const mainTotal = sumGroups(groups, mainKeys, "total");
+  const highValueEffective = sumGroups(groups, highValueKeys, "effective");
+  const monthlyMissionCurrent = normalizeMetricValue(groups.development.effective + groups.showing.total);
+  const contractTempleCurrent = normalizeMetricValue(source.listing + source.meeting + source.contract);
+  return {
+    period: reportPeriodKeyFromMetrics(rawMetrics),
+    updatedAt: new Date().toISOString(),
+    sourceMetrics: source,
+    deltaMetrics: delta,
+    groups,
+    main: {
+      label: "合計(E)=A+B+C+D",
+      effective: mainEffective,
+      total: mainTotal,
+      dreamTarget: 6,
+      dreamDone: mainTotal >= 6,
+    },
+    highValue: {
+      label: "B+C+D 有效組數",
+      current: highValueEffective,
+      target: 4,
+      done: highValueEffective > 4,
+    },
+    phoneSignal: {
+      label: "電話信號",
+      calls: source.calls,
+      note: "電話越多越好，作為信號加成，不蓋過 B+C+D 有效。",
+    },
+    monthlyMission: {
+      label: "月任務：開發有效 + 帶看組數",
+      current: monthlyMissionCurrent,
+      target: 20,
+      done: monthlyMissionCurrent >= 20,
+    },
+    contractTemple: {
+      label: "成交神殿進度",
+      current: contractTempleCurrent,
+      sources: {
+        listing: source.listing,
+        meeting: source.meeting,
+        contract: source.contract,
+      },
+      note: "只由委託、見面談、簽約推進。",
+    },
+  };
+}
+
+function normalizeProgressSnapshot(progress, sourceMetrics = normalizeGameMetrics(SAMPLE_METRICS)) {
+  if (!isPlainObject(progress)) return buildProgressSnapshot(sourceMetrics, sourceMetrics, sourceMetrics);
+  return {
+    ...buildProgressSnapshot(progress.sourceMetrics || sourceMetrics, progress.sourceMetrics || sourceMetrics, progress.deltaMetrics || sourceMetrics),
+    ...progress,
+    groups: normalizeReportGroups({ __groups: progress.groups }, progress.sourceMetrics || sourceMetrics),
+  };
+}
+
 function currentPeriodKey(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -544,6 +749,50 @@ function normalizeReportPeriodKey(value) {
   const rocSlash = text.match(/(?:^|[^\d])(\d{2,3})[/-](\d{1,2})(?:[/-]\d{1,2})?(?=$|[^\d])/);
   if (rocSlash) return `${Number(rocSlash[1]) + 1911}-${String(Number(rocSlash[2])).padStart(2, "0")}`;
   return "";
+}
+
+function readCloudManagerKey() {
+  try {
+    return cleanProfileText(sessionStorage.getItem(CLOUD_MANAGER_KEY_STORAGE) || "", "", 160);
+  } catch {
+    return "";
+  }
+}
+
+function captureCloudManagerKeyFromUrl() {
+  if (!MANAGER_MODE || typeof URLSearchParams !== "function" || typeof location !== "object") return "";
+  const search = typeof location.search === "string" ? location.search : "";
+  const params = new URLSearchParams(search);
+  const key = cleanProfileText(params.get("manager_key") || params.get("key") || "", "", 160);
+  if (!key) return "";
+  writeCloudManagerKey(key);
+  params.delete("manager_key");
+  params.delete("key");
+  if (typeof history === "object" && typeof history.replaceState === "function") {
+    const query = params.toString();
+    const nextUrl = `${location.pathname || "/"}${query ? `?${query}` : ""}${location.hash || ""}`;
+    history.replaceState(null, "", nextUrl);
+  }
+  return key;
+}
+
+function writeCloudManagerKey(value) {
+  const key = cleanProfileText(value, "", 160);
+  try {
+    if (key) sessionStorage.setItem(CLOUD_MANAGER_KEY_STORAGE, key);
+    else sessionStorage.removeItem(CLOUD_MANAGER_KEY_STORAGE);
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+function getCloudManagerKey() {
+  return readCloudManagerKey();
+}
+
+function cloudManagerKeyRequired() {
+  return MANAGER_MODE && CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock" && !getCloudManagerKey();
 }
 
 function reportPeriodKeyFromMetrics(metrics = {}) {
@@ -626,7 +875,24 @@ function createInitialState() {
       team_core: 0,
     },
     metrics: normalizeGameMetrics(SAMPLE_METRICS),
+    progress: buildProgressSnapshot(SAMPLE_METRICS, normalizeGameMetrics(SAMPLE_METRICS), normalizeGameMetrics(SAMPLE_METRICS)),
     sourceLedger: createSourceLedger(),
+    manager: {
+      teamMissionStarted: false,
+      bonusEnabled: false,
+      bonusStatus: "placeholder",
+      temporaryTaskStarted: false,
+      lastImport: null,
+      warnings: [],
+      cloudStatus: "local",
+      cloudDashboard: null,
+      cloudImportPreview: null,
+    },
+    backendConfig: {
+      dropRates: {},
+      assistRules: {},
+      poolUnlocks: {},
+    },
     settlementStreak: {
       count: 0,
       best: 0,
@@ -752,7 +1018,24 @@ function normalizeImportedState(importedState) {
     tickets: mergeObject(initial.tickets, source.tickets),
     materials: mergeObject(initial.materials, source.materials),
     metrics: normalizeGameMetrics(source.metrics || initial.metrics),
+    progress: normalizeProgressSnapshot(source.progress, source.progress?.sourceMetrics || source.metrics || initial.metrics),
     sourceLedger: normalizeSourceLedger(source.sourceLedger || initial.sourceLedger),
+    manager: {
+      ...initial.manager,
+      ...(isPlainObject(source.manager) ? source.manager : {}),
+      temporaryTaskStarted: Boolean(source.manager?.temporaryTaskStarted),
+      warnings: Array.isArray(source.manager?.warnings) ? [...source.manager.warnings] : [...initial.manager.warnings],
+      cloudStatus: typeof source.manager?.cloudStatus === "string" ? source.manager.cloudStatus : initial.manager.cloudStatus,
+      cloudDashboard: isPlainObject(source.manager?.cloudDashboard) ? source.manager.cloudDashboard : initial.manager.cloudDashboard,
+      cloudImportPreview: isPlainObject(source.manager?.cloudImportPreview) ? source.manager.cloudImportPreview : initial.manager.cloudImportPreview,
+    },
+    backendConfig: {
+      ...initial.backendConfig,
+      ...(isPlainObject(source.backendConfig) ? source.backendConfig : {}),
+      dropRates: isPlainObject(source.backendConfig?.dropRates) ? { ...source.backendConfig.dropRates } : {},
+      assistRules: isPlainObject(source.backendConfig?.assistRules) ? { ...source.backendConfig.assistRules } : {},
+      poolUnlocks: isPlainObject(source.backendConfig?.poolUnlocks) ? { ...source.backendConfig.poolUnlocks } : {},
+    },
     settlementStreak: mergeObject(initial.settlementStreak, source.settlementStreak),
     lastRewards: {
       ...initial.lastRewards,
@@ -818,6 +1101,510 @@ function restoreProgressBackupText(text) {
   }
 }
 
+function reloadWithoutQuery() {
+  if (typeof window !== "object") return;
+  const path = `${window.location?.origin || ""}${window.location?.pathname || ""}`;
+  if (window.location && typeof window.location.assign === "function" && path) {
+    window.location.assign(path);
+    return;
+  }
+  if (window.location && typeof window.location.reload === "function") window.location.reload();
+}
+
+function handleEmployeeLogin(form) {
+  const employeeId = cleanEmployeeId(form?.elements?.employeeId?.value || document.getElementById("employeeIdInput")?.value || "");
+  const status = document.getElementById("loginStatus");
+  if (!employeeId) {
+    if (status) status.textContent = "請輸入員工編號";
+    return false;
+  }
+  writeEmployeeLogin({ employeeId, branch: PROFILE.branch, agent: `員編 ${employeeId}` });
+  reloadWithoutQuery();
+  return true;
+}
+
+function switchEmployee() {
+  clearEmployeeLogin();
+  reloadWithoutQuery();
+}
+
+function applyBackendEmployeeSnapshot(snapshot = {}) {
+  const metrics = normalizeGameMetrics(snapshot.metrics || snapshot.sourceMetrics || state.metrics);
+  const sourceMetrics = normalizeGameMetrics(snapshot.sourceMetrics || metrics);
+  const deltaMetrics = normalizeGameMetrics(snapshot.deltaMetrics || metrics);
+  state.metrics = deltaMetrics;
+  state.progress = buildProgressSnapshot(
+    { ...sourceMetrics, __periodKey: snapshot.period || currentPeriodKey(), __groups: snapshot.groups || {} },
+    sourceMetrics,
+    deltaMetrics,
+  );
+  if (snapshot.replaceInventory) {
+    if (isPlainObject(snapshot.tickets)) state.tickets = { ...snapshot.tickets };
+    if (isPlainObject(snapshot.materials)) state.materials = { ...snapshot.materials };
+    if (isPlainObject(snapshot.collection)) state.collection = { ...snapshot.collection };
+  } else {
+    if (isPlainObject(snapshot.tickets)) state.tickets = mergeObject(state.tickets, snapshot.tickets);
+    if (isPlainObject(snapshot.materials)) state.materials = mergeObject(state.materials, snapshot.materials);
+    if (isPlainObject(snapshot.collection)) state.collection = mergeObject(state.collection, snapshot.collection);
+  }
+  if (isPlainObject(snapshot.backendConfig)) {
+    state.backendConfig = {
+      ...state.backendConfig,
+      ...snapshot.backendConfig,
+      dropRates: isPlainObject(snapshot.backendConfig.dropRates) ? { ...snapshot.backendConfig.dropRates } : state.backendConfig.dropRates,
+      assistRules: isPlainObject(snapshot.backendConfig.assistRules) ? { ...snapshot.backendConfig.assistRules } : state.backendConfig.assistRules,
+      poolUnlocks: isPlainObject(snapshot.backendConfig.poolUnlocks) ? { ...snapshot.backendConfig.poolUnlocks } : state.backendConfig.poolUnlocks,
+    };
+  }
+  saveState();
+  render();
+  return state.progress;
+}
+
+function collectionArrayToMap(items = []) {
+  if (!Array.isArray(items)) return {};
+  return items.reduce((acc, item) => {
+    if (!isPlainObject(item) || !item.pet_id) return acc;
+    acc[item.pet_id] = {
+      user_id: PROFILE.userKey,
+      pet_id: item.pet_id,
+      level: rewardCount(item.level || 1) || 1,
+      exp: rewardCount(item.exp || 0),
+      star: rewardCount(item.star || 1) || 1,
+      current_form: item.current_form || item.form || "初生型",
+      duplicate_fragments: rewardCount(item.duplicate_fragments || item.fragments || 0),
+      owned_count: rewardCount(item.owned_count || 1) || 1,
+      first_acquired_at: item.first_acquired_at || new Date().toISOString(),
+      last_upgraded_at: item.last_upgraded_at || new Date().toISOString(),
+      awakened: Boolean(item.awakened),
+      ultimate: Boolean(item.ultimate),
+    };
+    return acc;
+  }, {});
+}
+
+function cloudResourcesToTickets(resources = {}) {
+  const tickets = isPlainObject(resources.tickets) ? { ...resources.tickets } : {};
+  const drawPoints = isPlainObject(resources.draw_points) ? resources.draw_points : {};
+  const hasTicketBalance = Object.values(tickets).some((value) => Number(value || 0) > 0);
+  if (!hasTicketBalance && Object.keys(drawPoints).length) {
+    tickets.general = Number(drawPoints.report_points || 0) + Number(drawPoints.daily_free || 0);
+    tickets.boosted = Number(drawPoints.boosted || 0);
+    tickets.result = Number(drawPoints.result || 0);
+    tickets.blessing = Number(drawPoints.blessing || 0) + Number(drawPoints.bonus_draw || 0);
+  }
+  return tickets;
+}
+
+function cloudPlayerStateToSnapshot(data = {}) {
+  const resources = isPlainObject(data.resources) ? data.resources : {};
+  const collection = isPlainObject(data.collection) ? data.collection : {};
+  const ownedCollection = collectionArrayToMap(collection.owned || []);
+  const snapshot = {
+    period: data.period || currentPeriodKey(),
+    sourceMetrics: data.source_metrics || data.sourceMetrics || {},
+    deltaMetrics: data.latest_delta || data.delta_metrics || data.deltaMetrics || {},
+    tickets: cloudResourcesToTickets(resources),
+    materials: resources.materials || {},
+    collection: ownedCollection,
+    backendConfig: data.backend_config || data.backendConfig || {},
+    replaceInventory: Boolean(data.reset_cleared || data.reset?.cleared),
+  };
+  if (data.active_pet?.pet_id) snapshot.activePetId = data.active_pet.pet_id;
+  return snapshot;
+}
+
+function applyCloudPlayerState(data = {}) {
+  if (isPlainObject(data.player)) {
+    PROFILE.branch = cleanProfileText(data.player.branch, PROFILE.branch, 18);
+    PROFILE.agent = cleanProfileText(data.player.agent_name || data.player.agent, PROFILE.agent, 18);
+    PROFILE.employeeId = cleanEmployeeId(data.player.uid || PROFILE.employeeId);
+    PROFILE.userKey = stableProfileKey(PROFILE.employeeId || PROFILE.userKey);
+  }
+  const snapshot = cloudPlayerStateToSnapshot(data);
+  applyBackendEmployeeSnapshot(snapshot);
+  if (snapshot.activePetId && getPet(snapshot.activePetId)) state.activePetId = snapshot.activePetId;
+  state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-playerState" : "cloud-playerState";
+  saveState();
+  render();
+  return true;
+}
+
+function applyCloudManagerDashboard(data = {}) {
+  state.manager.cloudDashboard = data;
+  state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-managerDashboard" : "cloud-managerDashboard";
+  if (data.latest_import) {
+    state.manager.lastImport = {
+      at: data.latest_import.confirmed_at || data.latest_import.uploaded_at || new Date().toISOString(),
+      period: data.period || currentPeriodKey(),
+      source: data.latest_import.import_id || "cloud",
+      rows: Array.isArray(data.players) ? data.players.length : 0,
+    };
+  }
+  state.manager.warnings = Array.isArray(data.warnings) ? data.warnings.map((item) => item.message || String(item)) : [];
+  saveState();
+  render();
+  return true;
+}
+
+function cloudEnvelopeData(envelope, action) {
+  if (!isPlainObject(envelope) || envelope.ok !== true) return null;
+  if (envelope.action && envelope.action !== action) return null;
+  return isPlainObject(envelope.data) ? envelope.data : null;
+}
+
+function mockCloudEnvelope(action, payload = {}) {
+  const period = currentPeriodKey();
+  if (action === "playerState") {
+    return {
+      ok: true,
+      action,
+      server_time: new Date().toISOString(),
+      data: {
+        player: { uid: PROFILE.employeeId || PROFILE.userKey, branch: PROFILE.branch, agent_name: PROFILE.agent },
+        period,
+        latest_import: { import_id: "mock_import_001", published_at: new Date().toISOString() },
+        source_metrics: SAMPLE_METRICS,
+        awarded_metrics: SAMPLE_METRICS,
+        latest_delta: { ...normalizeGameMetrics(SAMPLE_METRICS), calls: 5 },
+        resources: {
+          draw_points: { report_points: 8, daily_free: 3, bonus_draw: 0 },
+          tickets: { general: 6, boosted: 2, result: 3, blessing: 0 },
+          materials: { development_core: 12, listing_core: 2, meeting_core: 1, showing_core: 1, call_core: 2 },
+        },
+        reset: { available: true, warning: "重置會清空卡片庫、寵物、碎片、素材、抽卡紀錄、每日免費抽、月榜第一與加碼，只保留報表重新計算的抽卡點數" },
+        active_pet: { pet_id: "pet_dev_001" },
+        collection: {
+          owned: [
+            { pet_id: "pet_dev_001", level: 2, star: 1, current_form: "初生型", duplicate_fragments: 0 },
+            { pet_id: "pet_call_003", level: 1, star: 1, current_form: "初生型", duplicate_fragments: 4 },
+          ],
+        },
+        draw_pools: [],
+      },
+      warnings: [],
+      errors: [],
+    };
+  }
+  if (action === "managerDashboard") {
+    return {
+      ok: true,
+      action,
+      server_time: new Date().toISOString(),
+      data: {
+        period,
+        latest_import: { import_id: "mock_import_001", status: "PUBLISHED", uploaded_at: new Date().toISOString(), confirmed_at: new Date().toISOString(), warning_count: 0 },
+        raw_report_rotation: {
+          latest: { file_name: `${period}_latest_行程質量統計.xlsx`, file_hash: "sha256:mock-latest" },
+          previous: { file_name: `${period}_previous_行程質量統計.xlsx`, file_hash: "sha256:mock-previous" },
+        },
+        players: [
+          { uid: "490326", agent_name: "蔡晉豪", event_basis: { monthly_policy_development_plus_showing: 6, bcd_valid: 7 }, source_metrics: SAMPLE_METRICS, draw_points_balance: 8, collection_count: 2, updated_at: new Date().toISOString() },
+          { uid: "490101", agent_name: "示範同仁A", event_basis: { monthly_policy_development_plus_showing: 12, bcd_valid: 5 }, source_metrics: { ...SAMPLE_METRICS, listing: 2, contract: 1, showing: 5 }, draw_points_balance: 4, collection_count: 4, updated_at: new Date().toISOString() },
+        ],
+        collection_summary: {
+          total_owned_kinds: 6,
+          by_storyline: collectionCountsByStoryline().map((item) => ({ storyline_id: item.storyline.storyline_id, name: item.storyline.name, owned: item.owned, total: item.total })),
+        },
+        warnings: [],
+      },
+      warnings: [],
+      errors: [],
+    };
+  }
+  if (action === "uploadImport") {
+    if (payload.mode === "commit") {
+      return {
+        ok: true,
+        action,
+        server_time: new Date().toISOString(),
+        data: {
+          mode: "commit",
+          import_id: payload.import_id || "mock_import_001",
+          status: "PUBLISHED",
+          committed_rows: 2,
+          skipped_rows: 0,
+          updated_player_count: 2,
+        },
+        warnings: [],
+        errors: [],
+      };
+    }
+    return {
+      ok: true,
+      action,
+      server_time: new Date().toISOString(),
+      data: {
+        mode: "preview",
+        import_id: "mock_import_001",
+        status: "PREVIEWED",
+        preview_token: "mock_import_001",
+        summary: { matched_active_players: 2, team_rows: 1, skipped_rows: 0, missing_active_players: 0, warning_count: 0 },
+        player_previews: [
+          { uid: "490326", report_name: "蔡晉豪", report_period: period, event_basis: { e_valid: 3, e_total: 4.2, bcd_valid: 5 }, reward_preview: { draw_points_delta: 3 }, row_status: "MATCHED" },
+          { uid: "490101", report_name: "示範同仁A", report_period: period, event_basis: { e_valid: 2, e_total: 3, bcd_valid: 4 }, reward_preview: { draw_points_delta: 2 }, row_status: "MATCHED" },
+        ],
+        warnings: [],
+      },
+      warnings: [],
+      errors: [],
+    };
+  }
+  if (action === "draw") {
+    const pool = payload.pool || "general";
+    const pet = poolCandidates(POOLS.find((item) => item.key === pool) || POOLS[0])[0] || PETS[0];
+    const playerState = mockCloudEnvelope("playerState").data;
+    playerState.resources.tickets = { ...state.tickets, [pool]: Math.max(0, Number(state.tickets[pool] || 0) - 1) };
+    playerState.collection.owned = [
+      ...(playerState.collection.owned || []),
+      { pet_id: pet.pet_id, level: 1, star: 1, current_form: pet.base_form, duplicate_fragments: 0, owned_count: 1 },
+    ];
+    playerState.active_pet = { pet_id: pet.pet_id };
+    return {
+      ok: true,
+      action,
+      server_time: new Date().toISOString(),
+      data: {
+        draw_event_id: `mock_draw_${Date.now()}`,
+        uid: PROFILE.employeeId || PROFILE.userKey,
+        pool,
+        pet: { pet_id: pet.pet_id, name: pet.name, rarity: pet.rarity, storyline_id: pet.storyline_id },
+        duplicate: false,
+        fragments_added: 0,
+        player_state: playerState,
+      },
+      warnings: [],
+      errors: [],
+    };
+  }
+  if (action === "resetPlayer") {
+    const playerState = mockCloudEnvelope("playerState").data;
+    playerState.resources = {
+      draw_points: { report_points: 0, daily_free: 0, bonus_draw: 0 },
+      tickets: { general: 0, boosted: 0, result: 0, blessing: 0 },
+      materials: {},
+      fragments: {},
+    };
+    playerState.collection = { owned: [], summary: { owned_kinds: 0, total_kinds: PETS.length, by_storyline: [] } };
+    playerState.active_pet = {};
+    playerState.reset_cleared = true;
+    return {
+      ok: true,
+      action,
+      server_time: new Date().toISOString(),
+      data: {
+        reset_id: `mock_reset_${Date.now()}`,
+        uid: PROFILE.employeeId || PROFILE.userKey,
+        player_state: playerState,
+      },
+      warnings: [],
+      errors: [],
+    };
+  }
+  return { ok: false, action, data: null, warnings: [], errors: [{ code: "MOCK_ACTION_NOT_FOUND", message: action }] };
+}
+
+async function fetchCloudEnvelope(action, params = {}) {
+  if (!CLOUD_API_BASE_URL) return null;
+  if (CLOUD_API_BASE_URL === "mock") return mockCloudEnvelope(action);
+  if (typeof fetch !== "function") return null;
+  const url = new URL(CLOUD_API_BASE_URL);
+  url.searchParams.set("action", action);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
+  });
+  const response = await fetch(url.href, { cache: "no-store" });
+  if (!response.ok) throw new Error(`Cloud API ${action} ${response.status}`);
+  return response.json();
+}
+
+async function postCloudEnvelope(action, payload = {}) {
+  if (!CLOUD_API_BASE_URL) return null;
+  const body = {
+    action,
+    request_id: randomClientId("req"),
+    ...payload,
+  };
+  if (CLOUD_API_BASE_URL === "mock") return mockCloudEnvelope(action, body);
+  if (typeof fetch !== "function") return null;
+  const response = await fetch(CLOUD_API_BASE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`Cloud API ${action} ${response.status}`);
+  return response.json();
+}
+
+async function loadCloudState() {
+  if (!CLOUD_API_BASE_URL) return false;
+  try {
+    const action = MANAGER_MODE ? "managerDashboard" : "playerState";
+    const managerKey = MANAGER_MODE ? getCloudManagerKey() : "";
+    if (cloudManagerKeyRequired()) {
+      state.manager.cloudStatus = "manager-key-required";
+      return false;
+    }
+    const params = MANAGER_MODE
+      ? { period: currentPeriodKey(), manager_key: managerKey }
+      : { uid: PROFILE.employeeId || PROFILE.userKey, period: currentPeriodKey() };
+    if (!MANAGER_MODE && PROFILE.loginRequired) return false;
+    const data = cloudEnvelopeData(await fetchCloudEnvelope(action, params), action);
+    if (!data) return false;
+    return MANAGER_MODE ? applyCloudManagerDashboard(data) : applyCloudPlayerState(data);
+  } catch (error) {
+    state.manager.cloudStatus = `cloud-error:${error.message || "unknown"}`;
+    saveState();
+    render();
+    return false;
+  }
+}
+
+function setCloudImportStatus(message, tone = "") {
+  const element = document.getElementById("cloudImportStatus");
+  if (!element) return;
+  element.textContent = message || "";
+  element.classList.toggle("is-good", tone === "good");
+  element.classList.toggle("is-bad", tone === "bad");
+}
+
+function cloudImportSheetId() {
+  return cleanProfileText(document.getElementById("cloudImportSheetId")?.value || "", "", 140);
+}
+
+async function previewCloudImport() {
+  if (!CLOUD_API_BASE_URL) {
+    setCloudImportStatus("尚未設定 ?api=<Apps Script Web App URL>", "bad");
+    return false;
+  }
+  const managerKey = getCloudManagerKey();
+  if (cloudManagerKeyRequired()) {
+    setCloudImportStatus("管理網址缺少 manager_key，請使用店長專用入口", "bad");
+    return false;
+  }
+  const spreadsheetId = cloudImportSheetId();
+  if (!spreadsheetId) {
+    setCloudImportStatus("請先貼上 Google Sheet ID", "bad");
+    return false;
+  }
+  try {
+    setCloudImportStatus("正在產生預覽...");
+    const envelope = await postCloudEnvelope("uploadImport", {
+      mode: "preview",
+      manager_key: managerKey,
+      operating_period: currentPeriodKey(),
+      source: {
+        kind: "google_sheet_id",
+        spreadsheet_id: spreadsheetId,
+        file_name: "店長匯入 Google Sheet",
+      },
+    });
+    const data = cloudEnvelopeData(envelope, "uploadImport");
+    if (!data || !data.import_id) throw new Error(envelope?.errors?.[0]?.message || "preview missing import_id");
+    state.manager.cloudImportPreview = data;
+    state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-uploadImport-preview" : "cloud-uploadImport-preview";
+    saveState();
+    render();
+    setCloudImportStatus(`預覽完成：${data.summary?.matched_active_players || data.player_previews?.length || 0} 位同仁，import_id ${data.import_id}`, "good");
+    return true;
+  } catch (error) {
+    state.manager.cloudStatus = `cloud-import-preview-error:${error.message || "unknown"}`;
+    saveState();
+    render();
+    setCloudImportStatus(`預覽失敗：${error.message || "unknown"}`, "bad");
+    return false;
+  }
+}
+
+async function commitCloudImport() {
+  const preview = state.manager.cloudImportPreview;
+  if (!preview?.import_id) {
+    setCloudImportStatus("尚未有可確認的預覽", "bad");
+    return false;
+  }
+  const managerKey = getCloudManagerKey();
+  if (cloudManagerKeyRequired()) {
+    setCloudImportStatus("管理網址缺少 manager_key，請使用店長專用入口", "bad");
+    return false;
+  }
+  try {
+    setCloudImportStatus("正在確認入帳...");
+    const envelope = await postCloudEnvelope("uploadImport", {
+      mode: "commit",
+      manager_key: managerKey,
+      import_id: preview.import_id,
+      preview_token: preview.preview_token || preview.import_id,
+      confirmed_by: "manager",
+    });
+    const data = cloudEnvelopeData(envelope, "uploadImport");
+    if (!data || !data.status) throw new Error(envelope?.errors?.[0]?.message || "commit missing status");
+    state.manager.cloudImportPreview = null;
+    state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-uploadImport-commit" : "cloud-uploadImport-commit";
+    state.manager.lastImport = {
+      at: new Date().toISOString(),
+      period: currentPeriodKey(),
+      source: data.import_id || "cloud",
+      rows: data.committed_rows || 0,
+    };
+    saveState();
+    await loadCloudState();
+    render();
+    setCloudImportStatus(`入帳完成：${data.committed_rows || 0} 位同仁`, "good");
+    return true;
+  } catch (error) {
+    state.manager.cloudStatus = `cloud-import-commit-error:${error.message || "unknown"}`;
+    saveState();
+    render();
+    setCloudImportStatus(`入帳失敗：${error.message || "unknown"}`, "bad");
+    return false;
+  }
+}
+
+function randomClientId(prefix = "client") {
+  const randomPart = typeof crypto === "object" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}_${randomPart}`;
+}
+
+function applyManagerImportText(text, source = "manager-upload") {
+  const metrics = parseCsv(text);
+  metrics.__source = source;
+  metrics.__rows = Math.max(0, String(text || "").trim().split(/\r?\n/).filter(Boolean).length - 1);
+  state.manager.warnings = [];
+  settleMetrics(metrics);
+  state.manager.lastImport = {
+    at: new Date().toISOString(),
+    period: reportPeriodKeyFromMetrics(metrics),
+    source,
+    rows: metrics.__rows,
+  };
+  saveState();
+  render();
+  return metrics;
+}
+
+function handleManagerFile(file) {
+  if (!file) return false;
+  const name = file.name || "匯入檔案";
+  if (/\.(xlsx|xls)$/i.test(name)) {
+    state.manager.warnings = ["Excel 檔需要後端先拆成資料接口；目前前端雛形只直接讀 CSV/TXT。"];
+    state.manager.lastImport = { at: new Date().toISOString(), period: currentPeriodKey(), source: name, rows: 0 };
+    saveState();
+    render();
+    return false;
+  }
+  const reader = new FileReader();
+  reader.addEventListener("load", () => applyManagerImportText(String(reader.result || ""), name));
+  reader.addEventListener("error", () => {
+    state.manager.warnings = [`無法讀取 ${name}`];
+    saveState();
+    render();
+  });
+  reader.readAsText(file);
+  return true;
+}
+
 function registerServiceWorker() {
   const canRegister =
     typeof navigator === "object" &&
@@ -845,10 +1632,43 @@ function requestResetProgress() {
   const shouldReset =
     typeof window !== "object" ||
     typeof window.confirm !== "function" ||
-    window.confirm(`重置 ${PROFILE.agent} 的示範進度？目前寵物、券、素材與今日結算紀錄都會清除。`);
+    window.confirm(`全部重置 ${PROFILE.agent} 的進度？卡片庫、寵物、碎片、素材、抽卡紀錄、每日免費抽、月榜第一與加碼都會清除；只保留 A/B/C/D 行程與成果項重新計算出的抽卡點數。`);
   if (!shouldReset) return false;
+  if (CLOUD_API_BASE_URL) {
+    resetCloudProgress();
+    return true;
+  }
   resetProgress();
   return true;
+}
+
+async function resetCloudProgress() {
+  try {
+    const envelope = await postCloudEnvelope("resetPlayer", {
+      uid: PROFILE.employeeId || PROFILE.userKey,
+      period: currentPeriodKey(),
+      reset_scope: "all_game_state",
+      confirm_text: "我知道會清空卡片庫與加碼",
+      client_request_id: randomClientId("reset"),
+    });
+    const data = cloudEnvelopeData(envelope, "resetPlayer");
+    if (!data || !data.player_state) throw new Error("resetPlayer response missing player_state");
+    applyCloudPlayerState(data.player_state);
+    state.history.unshift({
+      type: "system",
+      at: new Date().toISOString(),
+      text: "雲端重置完成，已依規則清空卡片庫、素材、碎片與加碼。",
+    });
+    state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-resetPlayer" : "cloud-resetPlayer";
+    saveState();
+    render();
+    return true;
+  } catch (error) {
+    state.manager.cloudStatus = `cloud-reset-error:${error.message || "unknown"}`;
+    saveState();
+    render();
+    return false;
+  }
 }
 
 function getPet(petId) {
@@ -877,13 +1697,21 @@ function getStorylines() {
 function fallbackStorylineName(storylineId) {
   const names = {
     area_map: "商圈星圖",
-    development: "開發遠征",
+    development: "開發遠征隊",
     negotiation: "議價鍛造",
     showing: "帶看小旅行",
     listing: "委託種子",
     offer: "斡旋迷宮",
     contract: "成交神殿",
     team_guard: "店鋪守護",
+    sl_area_star_map: "商圈星圖",
+    sl_development_expedition: "開發遠征隊",
+    sl_call_signal_tower: "電話信號塔",
+    sl_negotiation_forge: "議價鍛造屋",
+    sl_showing_route: "帶看小旅行",
+    sl_listing_seed_garden: "委託種子園",
+    sl_offer_maze: "斡旋迷宮",
+    sl_contract_team_sanctum: "成交神殿",
   };
   return names[storylineId] || storylineId;
 }
@@ -937,8 +1765,8 @@ async function loadExternalContent() {
     if (!response.ok) return;
     const manifest = await response.json();
     if (!Array.isArray(manifest.pets) || manifest.pets.length === 0) return;
-    PETS = manifest.pets.map(normalizeExternalPet);
-    STORYLINES = normalizeStorylines(manifest.storylines);
+    PETS = filterRuntimePets(manifest.pets.map(normalizeExternalPet));
+    STORYLINES = filterRuntimeStorylines(normalizeStorylines(manifest.storylines));
     ensureStarterPet();
     ensureCollectionStoryline();
     saveState();
@@ -1261,37 +2089,64 @@ function totalTickets() {
   return Object.values(state.tickets).reduce((sum, value) => sum + value, 0);
 }
 
-function activePetAssistBoost(pet = getActivePet(), owned = pet ? getOwned(pet.pet_id) : null) {
-  if (!pet || !owned) return 0;
-  const form = currentForm(pet, owned);
-  const formBoost = FORM_ASSIST_BOOST[form] || 0;
-  const rarityBoost = RARITY_ASSIST_BOOST[pet.rarity] || 0;
-  return Math.min(9, Math.max(0, formBoost + rarityBoost));
-}
-
-function poolOddsWithAssist(pool, pet = getActivePet(), owned = pet ? getOwned(pet.pet_id) : null) {
-  const odds = { ...(pool?.odds || {}) };
-  const poolRarities = RARITY_ORDER.filter((rarity) => Object.prototype.hasOwnProperty.call(odds, rarity));
-  if (poolRarities.length < 2) return { odds, boost: 0, topRarity: poolRarities[0] || "", pet, owned };
-  const boost = activePetAssistBoost(pet, owned);
-  const topRarity = poolRarities.at(-1);
-  const bottomRarity = poolRarities[0];
-  const shift = Math.min(boost, Math.max(0, Number(odds[bottomRarity] || 0) - 1));
-  if (shift > 0) {
-    odds[bottomRarity] -= shift;
-    odds[topRarity] = Number(odds[topRarity] || 0) + shift;
-  }
-  return { odds, boost: shift, topRarity, pet, owned };
-}
-
-function assistTextFromAdjustment(adjustment) {
-  if (!adjustment?.boost) return "";
-  return `主寵助力：${adjustment.pet.name} ${currentForm(adjustment.pet, adjustment.owned)}，${adjustment.topRarity} 稀有感應 +${adjustment.boost}%`;
-}
-
 function activePetAssistText(pet = getActivePet(), owned = pet ? getOwned(pet.pet_id) : null) {
-  const boost = activePetAssistBoost(pet, owned);
-  return boost > 0 ? `主寵助力：稀有感應 +${boost}%` : "主寵助力：取得主寵後開啟";
+  if (!pet || !owned) return "主寵助力：取得主寵後開啟";
+  const rule = state.backendConfig?.assistRules?.[pet.storyline_id] || state.backendConfig?.assistRules?.default;
+  if (rule?.label) return `主寵助力：${rule.label}`;
+  return `主寵助力：${currentForm(pet, owned)} 感應已開啟，倍率待設定`;
+}
+
+function configuredDropRates(poolKey) {
+  const rates = state.backendConfig?.dropRates?.[poolKey];
+  if (!isPlainObject(rates)) return null;
+  const normalized = {};
+  Object.entries(rates).forEach(([rarity, value]) => {
+    const amount = Number(value || 0);
+    if (RARITY_ORDER.includes(rarity) && amount > 0) normalized[rarity] = amount;
+  });
+  return Object.keys(normalized).length ? normalized : null;
+}
+
+function rarityDisplayText(pool) {
+  const rates = configuredDropRates(pool.key);
+  if (rates) {
+    return Object.entries(rates).map(([rarity, value]) => `<span class="rarity-badge rarity-${rarity}">${rarity} ${formatMetricValue(value)}%</span>`).join("");
+  }
+  return `<span class="soft-pill">掉落率待設定</span>${(pool.rarityBands || []).map((rarity) => `<span class="rarity-badge rarity-${rarity}">${rarity}</span>`).join("")}`;
+}
+
+function poolCandidates(pool) {
+  const allowedStorylines = new Set(pool.allowedStorylines || []);
+  const rarityBands = new Set(pool.rarityBands || RARITY_ORDER);
+  return PETS.filter((pet) => {
+    if (!pet.can_be_drawn || pet.rarity === "UR") return false;
+    if (!allowedStorylines.has(pet.storyline_id)) return false;
+    if (!rarityBands.has(pet.rarity)) return false;
+    if ((pool.key === "general" || pool.key === "boosted") && isContractTempleStoryline(pet.storyline_id)) return false;
+    return true;
+  });
+}
+
+function drawCandidate(pool) {
+  const rates = configuredDropRates(pool.key);
+  const candidates = poolCandidates(pool);
+  if (!candidates.length) return null;
+  if (rates) {
+    const rarity = rollRarity(rates);
+    const rarityCandidates = candidates.filter((pet) => pet.rarity === rarity);
+    if (rarityCandidates.length) return randomFrom(rarityCandidates);
+  }
+  return randomFrom(candidates);
+}
+
+function poolUnlocked(pool, progress = state.progress || buildProgressSnapshot()) {
+  const backendUnlock = state.backendConfig?.poolUnlocks?.[pool.key];
+  if (backendUnlock?.unlocked === false) return false;
+  if (pool.key === "general") return true;
+  if (pool.key === "boosted") return Boolean(progress.highValue?.done || (state.tickets.boosted || 0) > 0);
+  if (pool.key === "result") return Boolean(progress.contractTemple?.current > 0 || (state.tickets.result || 0) > 0);
+  if (pool.key === "blessing") return Boolean(Number(progress.contractTemple?.sources?.contract || 0) > 0 || (state.tickets.blessing || 0) > 0);
+  return true;
 }
 
 function todayKey(date = new Date()) {
@@ -1364,31 +2219,25 @@ function calculateRewards(rawMetrics, pet = getActivePet(), includeWish = true) 
   const metrics = normalizeGameMetrics(rawMetrics);
   const resultScore =
     rewardCount(metrics.listing) +
-    rewardCount(metrics.offer) +
-    rewardCount(metrics.price) +
-    rewardCount(metrics.meeting);
+    rewardCount(metrics.meeting) +
+    rewardCount(metrics.contract);
   const contractCount = rewardCount(metrics.contract);
   const activityScore =
-    metrics.area * 20 +
     metrics.development * 34 +
-    metrics.negotiation * 42 +
     metrics.showing * 46 +
     metrics.calls * 2 +
     metrics.momentum * 18;
   const baseRewards = {
     exp: Math.round(activityScore),
-    general: Math.max(1, Math.floor((metrics.area + metrics.development + metrics.showing + metrics.momentum + metrics.calls / 15) / 2)),
-    boosted: metrics.negotiation + metrics.showing + Math.floor(metrics.momentum / 2) >= 3 ? 1 : 0,
+    general: Math.max(1, Math.floor((metrics.development + metrics.showing + metrics.calls / 15) / 2)),
+    boosted: metrics.development + metrics.negotiation + metrics.showing >= 4 ? 1 : 0,
     result: resultScore,
     blessing: contractCount,
     materials: {
       listing_core: rewardCount(metrics.listing),
-      offer_core: rewardCount(metrics.offer),
-      negotiation_core: rewardCount(metrics.price) + rewardCount(metrics.negotiation),
       meeting_core: rewardCount(metrics.meeting),
       contract_core: contractCount,
-      development_core: Math.floor((metrics.development + metrics.momentum * 0.5 + metrics.calls / 20) * 2),
-      area_core: rewardCount(metrics.area),
+      development_core: Math.floor((metrics.development + metrics.calls / 20) * 2),
       call_core: Math.floor(metrics.calls / 15),
       showing_core: rewardCount(metrics.showing),
       team_core: contractCount > 0 ? 2 : 0,
@@ -1504,9 +2353,8 @@ function buildDailyQuests(rawMetrics) {
   const boostedProgress = metrics.negotiation + metrics.showing + Math.floor(metrics.momentum / 2);
   const resultProgress =
     rewardCount(metrics.listing) +
-    rewardCount(metrics.offer) +
-    rewardCount(metrics.price) +
-    rewardCount(metrics.meeting);
+    rewardCount(metrics.meeting) +
+    rewardCount(metrics.contract);
   const contractCount = rewardCount(metrics.contract);
 
   return [
@@ -1526,7 +2374,7 @@ function buildDailyQuests(rawMetrics) {
       current: boostedProgress,
       target: 3,
       done: boostedProgress >= 3,
-      message: boostedProgress >= 3 ? "今日已達強化池門檻" : `C 議價或 D 帶看再 ${3 - boostedProgress} 次`,
+      message: boostedProgress >= 3 ? "今日已達強化池門檻" : `B+C+D 有效再 ${3 - boostedProgress} 組`,
     },
     {
       key: "result",
@@ -1535,7 +2383,7 @@ function buildDailyQuests(rawMetrics) {
       current: resultProgress,
       target: 1,
       done: resultProgress >= 1,
-      message: resultProgress >= 1 ? "每多 1 件成果，多 1 張成果券與素材" : "先拿 1 件委託、斡旋、改價或面談",
+      message: resultProgress >= 1 ? "委託、見面談、簽約會推進成交神殿" : "先拿 1 件委託、見面談或簽約",
     },
     {
       key: "contract",
@@ -1566,13 +2414,21 @@ function settleMetrics(rawMetrics) {
   const period = ensureSourcePeriod(periodKey);
   const previousAwardedMetrics = normalizeGameMetrics(period.awardedMetrics);
   const deltaMetrics = diffGameMetrics(sourceMetrics, previousAwardedMetrics);
+  const progress = buildProgressSnapshot(rawMetrics, sourceMetrics, deltaMetrics);
   const hasIncrease = hasMetricIncrease(deltaMetrics);
   state.metrics = { ...deltaMetrics };
+  state.progress = progress;
   state.dailySettlements = state.dailySettlements || {};
   const dateKey = todayKey();
   const importedAt = new Date().toISOString();
   period.lastSourceMetrics = { ...sourceMetrics };
   period.lastImportedAt = importedAt;
+  state.manager.lastImport = {
+    at: importedAt,
+    period: periodKey,
+    source: rawMetrics.__source || "manual-or-csv",
+    rows: Number(rawMetrics.__rows || 0),
+  };
   state.sourceLedger.snapshots.unshift({
     period: periodKey,
     at: importedAt,
@@ -1594,6 +2450,7 @@ function settleMetrics(rawMetrics) {
       previousAwardedMetrics,
       metrics: { ...deltaMetrics },
       deltaMetrics: { ...deltaMetrics },
+      progress,
       achievements: noDeltaAchievements,
       imported_at: importedAt,
     };
@@ -1629,6 +2486,7 @@ function settleMetrics(rawMetrics) {
     previousAwardedMetrics,
     metrics: { ...deltaMetrics },
     deltaMetrics: { ...deltaMetrics },
+    progress,
     rewards,
     achievements,
     settled_at: importedAt,
@@ -1652,15 +2510,19 @@ function parseCsv(text) {
   if (headerIndex < 0) return { ...normalizeGameMetrics(SAMPLE_METRICS), __periodKey: periodKey };
   const headers = splitCsvLine(lines[headerIndex]).map((item) => item.trim());
   const sums = normalizeGameMetrics();
+  const groups = createReportGroups();
   lines.slice(headerIndex + 1).forEach((line) => {
     const cells = splitCsvLine(line);
     headers.forEach((header, index) => {
       const key = headerToMetricKey(header);
       if (!key) return;
-      sums[key] += parseReportMetricAmount(cells[index]);
+      const parsed = parseReportMetricCell(cells[index]);
+      sums[key] += parsed.weighted;
+      groups[key].effective += parsed.effective;
+      groups[key].total += parsed.total;
     });
   });
-  return { ...normalizeGameMetrics(sums), __periodKey: periodKey };
+  return { ...normalizeGameMetrics(sums), __periodKey: periodKey, __groups: normalizeReportGroups({ __groups: groups }, sums) };
 }
 
 function readManualMetrics(form) {
@@ -1718,16 +2580,25 @@ function normalizeReportHeader(header) {
 }
 
 function parseReportMetricAmount(value) {
+  return parseReportMetricCell(value).weighted;
+}
+
+function parseReportMetricCell(value) {
   const text = String(value ?? "").replace(/,/g, "").trim();
-  if (!text) return 0;
+  if (!text) return { effective: 0, total: 0, weighted: 0 };
   const numbers = text.match(/-?\d+(?:\.\d+)?/g)?.map(Number).filter(Number.isFinite) || [];
-  if (!numbers.length) return 0;
+  if (!numbers.length) return { effective: 0, total: 0, weighted: 0 };
   if ((text.includes("/") || text.includes("／")) && numbers.length >= 2) {
-    const valid = Math.max(0, numbers[0]);
-    const total = Math.max(valid, numbers[1]);
-    return valid * REPORT_VALID_WEIGHT + Math.max(0, total - valid) * REPORT_TOTAL_ONLY_WEIGHT;
+    const effective = Math.max(0, numbers[0]);
+    const total = Math.max(effective, numbers[1]);
+    return {
+      effective,
+      total,
+      weighted: effective * REPORT_VALID_WEIGHT + Math.max(0, total - effective) * REPORT_TOTAL_ONLY_WEIGHT,
+    };
   }
-  return Math.max(0, numbers[0]);
+  const effective = Math.max(0, numbers[0]);
+  return { effective, total: effective, weighted: effective };
 }
 
 function headerToMetricKey(header) {
@@ -1736,15 +2607,18 @@ function headerToMetricKey(header) {
   return REPORT_HEADER_RULES.find(([, aliases]) => aliases.some((alias) => normalized.includes(alias)))?.[0];
 }
 
-function draw(poolKey) {
+async function draw(poolKey) {
+  if (CLOUD_API_BASE_URL) {
+    const cloudDrawn = await drawCloud(poolKey);
+    if (cloudDrawn) return;
+    return;
+  }
   const pool = POOLS.find((item) => item.key === poolKey);
   if (!pool || state.tickets[poolKey] <= 0) return;
+  const pet = drawCandidate(pool);
+  if (!pet) return;
   state.tickets[poolKey] -= 1;
-  const assistAdjustment = poolOddsWithAssist(pool);
-  const rarity = rollRarity(assistAdjustment.odds);
-  const candidates = PETS.filter((pet) => pet.can_be_drawn && pet.rarity === rarity);
-  const fallback = PETS.filter((pet) => pet.can_be_drawn && pet.rarity !== "UR");
-  const pet = randomFrom(candidates.length ? candidates : fallback);
+  const assistText = activePetAssistText();
   const existing = getOwned(pet.pet_id);
   let resultText = "";
   if (existing) {
@@ -1775,11 +2649,51 @@ function draw(poolKey) {
     at: new Date().toISOString(),
     petId: pet.pet_id,
     text: `${pool.name} 抽到 ${pet.name}，${resultText}`,
-    assistText: assistTextFromAdjustment(assistAdjustment),
+    assistText,
+    poolKey,
+    rateMode: configuredDropRates(pool.key) ? "backend-configured" : "prototype-unweighted",
   });
   state.history = state.history.slice(0, 12);
   saveState();
   render();
+}
+
+async function drawCloud(poolKey) {
+  const pool = POOLS.find((item) => item.key === poolKey);
+  if (!pool) return false;
+  try {
+    const envelope = await postCloudEnvelope("draw", {
+      uid: PROFILE.employeeId || PROFILE.userKey,
+      period: currentPeriodKey(),
+      pool: poolKey,
+      resource_type: "ticket",
+      client_request_id: randomClientId("draw"),
+    });
+    const data = cloudEnvelopeData(envelope, "draw");
+    if (!data || !data.pet || !data.player_state) throw new Error("draw response missing pet/player_state");
+    applyCloudPlayerState(data.player_state);
+    const pet = getPet(data.pet.pet_id) || data.pet;
+    const resultText = data.duplicate ? `重複轉成碎片 +${rewardCount(data.fragments_added)}` : "新寵物加入卡片庫";
+    state.history.unshift({
+      type: "draw",
+      at: new Date().toISOString(),
+      petId: data.pet.pet_id,
+      text: `${pool.name} 抽到 ${pet.name || data.pet.pet_id}，${resultText}`,
+      assistText: activePetAssistText(),
+      poolKey,
+      rateMode: "cloud",
+    });
+    state.history = state.history.slice(0, 12);
+    state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-draw" : "cloud-draw";
+    saveState();
+    render();
+    return true;
+  } catch (error) {
+    state.manager.cloudStatus = `cloud-draw-error:${error.message || "unknown"}`;
+    saveState();
+    render();
+    return false;
+  }
 }
 
 function rollRarity(odds) {
@@ -1865,10 +2779,12 @@ function spendMaterials(required) {
 }
 
 function render() {
+  renderShellMode();
   renderProfile();
   renderReportPeriodInput();
   renderActivePet();
   renderEntrySummon();
+  renderProgressDashboard();
   renderDailyStatus();
   renderPetWish();
   renderDailyQuests();
@@ -1879,8 +2795,27 @@ function render() {
   renderPools();
   renderDrawResult();
   renderCollectionSummary();
+  renderInventoryBag();
   if (isViewActive("collection")) renderCollection();
   renderTeam();
+  renderCardGameBoard();
+  renderManagerDashboard();
+}
+
+function renderShellMode() {
+  const loginScreen = document.getElementById("loginScreen");
+  const appShell = document.getElementById("appShell");
+  const managerDashboard = document.getElementById("managerDashboard");
+  const isLoginRequired = Boolean(PROFILE.loginRequired && !MANAGER_MODE);
+  if (loginScreen) loginScreen.hidden = !isLoginRequired;
+  if (appShell) appShell.hidden = isLoginRequired;
+  if (managerDashboard) managerDashboard.hidden = !MANAGER_MODE || isLoginRequired;
+  document.body?.classList?.toggle("is-manager-mode", MANAGER_MODE);
+  document.body?.classList?.toggle("is-employee-login-required", isLoginRequired);
+  ["backupBtn", "restoreBtn", "resetBtn"].forEach((id) => {
+    const element = document.getElementById(id);
+    if (element) element.hidden = !MANAGER_MODE;
+  });
 }
 
 function renderReportPeriodInput() {
@@ -1913,7 +2848,21 @@ function renderDailyStatus() {
 
 function renderProfile() {
   const branchLabel = document.getElementById("branchLabel");
-  if (branchLabel) branchLabel.textContent = `${PROFILE.branch} · ${PROFILE.agent}`;
+  const hasCloudStatus = state.manager.cloudStatus && state.manager.cloudStatus !== "local";
+  const cloudLabel = CLOUD_API_BASE_URL || hasCloudStatus
+    ? state.manager.cloudStatus?.startsWith("cloud-error")
+      ? " · 雲端連線異常"
+      : CLOUD_API_BASE_URL === "mock" || state.manager.cloudStatus?.startsWith("mock")
+        ? " · mock雲端"
+        : " · 雲端資料"
+    : "";
+  if (branchLabel) {
+    branchLabel.textContent = MANAGER_MODE
+      ? `${PROFILE.branch} · 店長儀表板${cloudLabel}`
+      : `${PROFILE.branch} · ${PROFILE.agent} · 員編 ${PROFILE.employeeId || PROFILE.userKey}${cloudLabel}`;
+  }
+  const switchButton = document.getElementById("switchEmployeeBtn");
+  if (switchButton) switchButton.textContent = MANAGER_MODE ? "離開店長模式" : "登出 / 更換員編";
 }
 
 function renderActivePet() {
@@ -1974,7 +2923,7 @@ function renderEntrySummon() {
     <div class="summon-copy">
       <span class="summon-kicker">今日召喚</span>
       <strong>${escapeHtml(PROFILE.agent)}，${settled ? "今天的夥伴已醒來" : "先喚醒你的房仲精靈"}</strong>
-      <p>行程多一點讓 ${escapeHtml(pet.name)} 升級；委託 / 斡旋 / 簽約拿稀有素材。</p>
+      <p>累積越多，抽卡項目會越亮；精確倍率等後端設定後再顯示。</p>
     </div>
     <div class="summon-status">
       <span class="material-pill">${settled ? "今日已結算" : "待結算"}</span>
@@ -1990,8 +2939,77 @@ function renderEntrySummon() {
   `;
 }
 
+function progressPercent(current, target) {
+  if (!target) return 0;
+  return Math.max(0, Math.min(100, Math.round((Number(current || 0) / Number(target || 1)) * 100)));
+}
+
+function renderProgressDashboard() {
+  const target = document.getElementById("progressDashboard");
+  if (!target) return;
+  const progress = state.progress || buildProgressSnapshot(state.metrics);
+  const eEffectiveMilestone = progress.main.effective >= 4 ? "4/4 已達標" : progress.main.effective >= 3 ? "3/4 接近達標" : `${formatMetricValue(progress.main.effective)}/4 累積中`;
+  const dreamClass = progress.main.dreamDone ? " is-celebration" : "";
+  const highPercent = progressPercent(progress.highValue.current, progress.highValue.target);
+  const monthPercent = progressPercent(progress.monthlyMission.current, progress.monthlyMission.target);
+  const contractSources = progress.contractTemple.sources || {};
+  const contractLine = `委託 ${formatMetricValue(contractSources.listing)} · 見面談 ${formatMetricValue(contractSources.meeting)} · 簽約 ${formatMetricValue(contractSources.contract)}`;
+  const phoneSignal = progress.phoneSignal.calls >= 30 ? "訊號很亮" : progress.phoneSignal.calls >= 15 ? "訊號升溫" : "等待信號";
+  const unlockLine = [
+    poolUnlocked(POOLS[0], progress) ? "探索補給池" : "",
+    poolUnlocked(POOLS[1], progress) ? "高價值行動池" : "",
+    poolUnlocked(POOLS[2], progress) ? "成果種子池" : "",
+    poolUnlocked(POOLS[3], progress) ? "成交神殿池" : "",
+  ].filter(Boolean).join("、") || "完成累積後開啟抽卡";
+
+  const periodPill = document.getElementById("progressPeriodPill");
+  if (periodPill) periodPill.textContent = progress.period || currentPeriodKey();
+
+  target.innerHTML = `
+    <article class="progress-hero-card${dreamClass}">
+      <span class="summon-kicker">${escapeHtml(progress.main.label)}</span>
+      <strong>${formatMetricValue(progress.main.effective)} / ${formatMetricValue(progress.main.total)}</strong>
+      <p>有效 / 全部組數。${escapeHtml(eEffectiveMilestone)}</p>
+      ${progress.main.dreamDone ? `<span class="celebration-pill">E 全部達 ${formatMetricValue(progress.main.total)}，夢幻高標！</span>` : `<span class="soft-pill">E 全部 6 是爆發慶祝，不是每日壓力</span>`}
+    </article>
+    <article class="progress-card">
+      <div class="team-topline"><strong>${escapeHtml(progress.highValue.label)}</strong><span>${formatMetricValue(progress.highValue.current)} / >${progress.highValue.target}</span></div>
+      <div class="bar"><span style="width:${highPercent}%"></span></div>
+      <p>${progress.highValue.done ? "高價值行為已點亮。" : "最想推動的是 B+C+D 有效組數。"}</p>
+    </article>
+    <article class="progress-card">
+      <div class="team-topline"><strong>${escapeHtml(progress.phoneSignal.label)}</strong><span>${formatMetricValue(progress.phoneSignal.calls)} 通</span></div>
+      <p>${escapeHtml(phoneSignal)}。電話是加成信號，不蓋過 B+C+D 有效。</p>
+    </article>
+    <article class="progress-card">
+      <div class="team-topline"><strong>${escapeHtml(progress.monthlyMission.label)}</strong><span>${formatMetricValue(progress.monthlyMission.current)} / ${progress.monthlyMission.target}</span></div>
+      <div class="bar"><span style="width:${monthPercent}%"></span></div>
+      <p>月任務只看長期累積，不拆成每日壓力。</p>
+    </article>
+    <article class="progress-card">
+      <div class="team-topline"><strong>${escapeHtml(progress.contractTemple.label)}</strong><span>${formatMetricValue(progress.contractTemple.current)}</span></div>
+      <p>${escapeHtml(contractLine)}</p>
+      <p class="small-text">${escapeHtml(progress.contractTemple.note)}</p>
+    </article>
+    <article class="progress-card">
+      <div class="team-topline"><strong>已亮起抽卡項目</strong><span>${totalTickets()} 次</span></div>
+      <p>${escapeHtml(unlockLine)}</p>
+      <p class="small-text">抽卡倍率與精確掉落率待後端設定。</p>
+    </article>
+  `;
+}
+
 function renderMetrics() {
-  document.getElementById("metricsGrid").innerHTML = METRIC_LABELS.map(([key, label]) => `
+  const employeeMetrics = [
+    ["development", "B 開發"],
+    ["negotiation", "C 有效信號"],
+    ["showing", "D 帶看"],
+    ["calls", "電話信號"],
+    ["listing", "委託"],
+    ["meeting", "見面談"],
+    ["contract", "簽約"],
+  ];
+  document.getElementById("metricsGrid").innerHTML = employeeMetrics.map(([key, label]) => `
     <div class="metric-tile">
       <strong>${formatMetricValue(state.metrics[key] || 0)}</strong>
       <span>${label}</span>
@@ -2140,19 +3158,21 @@ function renderRewardAction() {
 function renderPools() {
   document.getElementById("ticketSummary").textContent = `券 ${totalTickets()}`;
   document.getElementById("poolGrid").innerHTML = POOLS.map((pool) => {
-    const assistAdjustment = poolOddsWithAssist(pool);
+    const candidates = poolCandidates(pool);
+    const unlocked = poolUnlocked(pool);
     return `
-      <article class="pool-card">
+      <article class="pool-card ${unlocked ? "" : "is-locked"}">
         <div class="team-topline">
           <h3>${pool.name}</h3>
           <span>${state.tickets[pool.key] || 0} 張</span>
         </div>
         <p class="small-text">${pool.source}</p>
-        ${assistAdjustment.boost ? `<p class="assist-line">${escapeHtml(assistTextFromAdjustment(assistAdjustment))}</p>` : ""}
+        <p class="assist-line">${escapeHtml(pool.unlockText)}</p>
         <div class="pool-meta">
-          ${Object.entries(assistAdjustment.odds).map(([rarity, value]) => `<span class="rarity-badge rarity-${rarity}">${rarity} ${value}%</span>`).join("")}
+          ${rarityDisplayText(pool)}
+          <span class="soft-pill">${candidates.length} 張候選卡</span>
         </div>
-        <button class="primary-button" type="button" data-draw="${pool.key}" ${state.tickets[pool.key] <= 0 ? "disabled" : ""}>抽一次</button>
+        <button class="primary-button" type="button" data-draw="${pool.key}" ${state.tickets[pool.key] <= 0 || !unlocked || !candidates.length ? "disabled" : ""}>抽一次</button>
       </article>
     `;
   }).join("");
@@ -2203,7 +3223,7 @@ function buildDrawShareText(draw = state.history.find((item) => item.type === "d
     `${PROFILE.branch} ${PROFILE.agent} 在房仲精靈抽到 ${petText}！`,
     subtitle,
     draw.assistText || "",
-    "行程讓寵物升級，委託/斡旋/簽約拿稀有素材。",
+    "累積推進抽卡，委託/見面談/簽約推進成交神殿。",
   ].filter(Boolean).join("\n");
 }
 
@@ -2244,12 +3264,13 @@ async function shareLastDraw() {
 }
 
 function metricSummaryText(metrics = state.metrics) {
-  const sourceMetrics = normalizeGameMetrics(metrics);
-  const items = METRIC_LABELS
-    .map(([key, label]) => [label, Number(sourceMetrics[key] || 0)])
-    .filter(([, value]) => value > 0);
-  if (!items.length) return "今日先累積紀錄";
-  return items.map(([label, value]) => `${label} ${formatMetricValue(value)}`).join("、");
+  const progress = state.progress || buildProgressSnapshot(metrics);
+  return [
+    `E ${formatMetricValue(progress.main.effective)} / ${formatMetricValue(progress.main.total)}`,
+    `B+C+D 有效 ${formatMetricValue(progress.highValue.current)}`,
+    `電話信號 ${formatMetricValue(progress.phoneSignal.calls)}`,
+    `成交神殿 ${formatMetricValue(progress.contractTemple.current)}`,
+  ].join("、");
 }
 
 function rewardSummaryText(rewards = state.lastRewards) {
@@ -2302,7 +3323,7 @@ function buildDailyShareText() {
     pet && owned ? activePetAssistText(pet, owned) : "",
   ].filter(Boolean);
   if (state.lastRewards?.blocked) lines.push("累積資料已記錄，目前沒有新增差額。");
-  lines.push("行程讓寵物升級，委託/斡旋/簽約拿稀有素材。");
+  lines.push("累積推進抽卡，委託/見面談/簽約推進成交神殿。");
   return lines.join("\n");
 }
 
@@ -2318,7 +3339,7 @@ function teamGoalContribution(goal, metrics = currentContributionMetrics()) {
   const sourceMetrics = normalizeGameMetrics(metrics);
   if (goal.key === "showing") return Number(sourceMetrics.showing || 0) + Number(sourceMetrics.meeting || 0);
   if (goal.key === "development") return Number(sourceMetrics.development || 0) + Number(sourceMetrics.momentum || 0) + Math.floor(Number(sourceMetrics.calls || 0) / 20);
-  if (goal.key === "listing") return Number(sourceMetrics.listing || 0) + Number(sourceMetrics.offer || 0) + Number(sourceMetrics.contract || 0);
+  if (goal.key === "listing") return Number(sourceMetrics.listing || 0) + Number(sourceMetrics.meeting || 0) + Number(sourceMetrics.contract || 0);
   return Number(sourceMetrics[goal.key] || 0);
 }
 
@@ -2347,10 +3368,10 @@ function buildTeamShareText() {
     `${PROFILE.branch} ${PROFILE.agent} 今日團隊貢獻`,
     hasSettledToday() ? "今日已結算" : "今日尚未結算",
     `行程：A${formatMetricValue(metrics.area)} / B${formatMetricValue(metrics.development)} / C${formatMetricValue(metrics.negotiation)} / D${formatMetricValue(metrics.showing)}，前置信號 ${formatMetricValue(metrics.momentum)}，電話 ${formatMetricValue(metrics.calls)}`,
-    `成果：委託 ${formatMetricValue(metrics.listing)}、斡旋 ${formatMetricValue(metrics.offer)}、改附表 ${formatMetricValue(metrics.price)}、見面談 ${formatMetricValue(metrics.meeting)}、簽約 ${formatMetricValue(metrics.contract)}`,
+    `成果：委託 ${formatMetricValue(metrics.listing)}、見面談 ${formatMetricValue(metrics.meeting)}、簽約 ${formatMetricValue(metrics.contract)}`,
     `今日合計：行程 ${formatMetricValue(activityTotal)}、成果 ${formatMetricValue(resultTotal)}`,
     `店內任務：${goalLine}`,
-    "行程讓寵物升級，委託/斡旋/簽約拿稀有素材。",
+    "累積推進抽卡，委託/見面談/簽約推進成交神殿。",
   ].join("\n");
 }
 
@@ -2365,6 +3386,68 @@ async function shareTeamContribution() {
 function renderCollectionSummary() {
   const ownedCount = ownedCurrentPetCount();
   document.getElementById("collectionSummary").textContent = `${ownedCount}/${PETS.length}`;
+}
+
+function ticketLabel(key) {
+  return {
+    general: "一般券",
+    boosted: "強化券",
+    result: "成果券",
+    blessing: "祝福券",
+  }[key] || key;
+}
+
+function collectionFragmentTotal() {
+  return Object.values(state.collection || {}).reduce((sum, owned) => sum + Number(owned?.duplicate_fragments || 0), 0);
+}
+
+function renderInventoryBag() {
+  const summary = document.getElementById("bagSummary");
+  const grid = document.getElementById("bagGrid");
+  const resetCard = document.getElementById("resetRuleCard");
+  if (!grid) return;
+  const tickets = Object.entries(state.tickets || {}).filter(([, value]) => Number(value || 0) > 0);
+  const materials = materialGainEntries(state.materials || {});
+  const ownedCount = ownedCurrentPetCount();
+  const fragmentTotal = collectionFragmentTotal();
+  if (summary) summary.textContent = `${totalTickets()} 券 · ${materials.length} 種素材`;
+  const sections = [
+    {
+      title: "抽卡券",
+      detail: tickets.length ? tickets.map(([key, value]) => `${ticketLabel(key)} ${value}`).join(" · ") : "目前沒有抽卡券",
+      meta: "由行程、成果或活動累積；每日免費抽當天未用就消失。",
+    },
+    {
+      title: "素材",
+      detail: materials.length ? materials.map(([key, value]) => `${materialLabel(key)} ${value}`).join(" · ") : "目前沒有素材",
+      meta: "委託、見面談、簽約等真實成果推進覺醒與成熟合成。",
+    },
+    {
+      title: "碎片",
+      detail: `${fragmentTotal} 片`,
+      meta: "重複卡會轉成碎片，用於升星與合成。",
+    },
+    {
+      title: "卡片庫",
+      detail: `${ownedCount} / ${PETS.length} 種`,
+      meta: "第一版只顯示 5 條開放故事線。",
+    },
+  ];
+  grid.innerHTML = sections.map((section) => `
+    <article class="bag-card">
+      <span class="summon-kicker">${escapeHtml(section.title)}</span>
+      <strong>${escapeHtml(section.detail)}</strong>
+      <p>${escapeHtml(section.meta)}</p>
+    </article>
+  `).join("");
+  if (resetCard) {
+    resetCard.innerHTML = `
+      <span class="summon-kicker">全部重置規則</span>
+      <strong>同仁自己選，選了就全部清空</strong>
+      <p>卡片庫、寵物、碎片、素材、抽卡紀錄、每日免費抽、月榜第一與加碼都會消失。</p>
+      <p>唯一保留的是 A/B/C/D 行程與成果項重新計算出的抽卡點數。</p>
+    `;
+  }
 }
 
 function renderStorylineFilter() {
@@ -2455,8 +3538,10 @@ function renderCollection() {
 }
 
 function renderTeam() {
+  const teamList = document.getElementById("teamList");
   renderTeamContribution();
-  document.getElementById("teamList").innerHTML = TEAM_GOALS.map((goal) => {
+  if (!teamList) return;
+  teamList.innerHTML = TEAM_GOALS.map((goal) => {
     const metrics = currentContributionMetrics();
     const contribution = teamGoalContribution(goal, metrics);
     const current = teamGoalCurrent(goal, metrics);
@@ -2469,6 +3554,206 @@ function renderTeam() {
       </article>
     `;
   }).join("");
+}
+
+function collectionCountsByStoryline() {
+  return getStorylines().map((storyline) => {
+    const pets = PETS.filter((pet) => pet.storyline_id === storyline.storyline_id);
+    const owned = pets.filter((pet) => getOwned(pet.pet_id)).length;
+    return { storyline, owned, total: pets.length };
+  });
+}
+
+function managerLeaderboardRows() {
+  const cloudPlayers = state.manager.cloudDashboard?.players;
+  if (Array.isArray(cloudPlayers) && cloudPlayers.length) {
+    return cloudPlayers.map((row) => {
+      const metrics = normalizeGameMetrics(row.source_metrics || row.sourceMetrics || {});
+      const basis = isPlainObject(row.event_basis) ? row.event_basis : {};
+      return {
+        agent: row.agent_name || row.agent || row.report_name || row.uid || "同仁",
+        employeeId: row.uid || row.employee_id || "",
+        branch: row.branch || PROFILE.branch,
+        monthlyDevelopmentShowing: normalizeMetricValue(basis.monthly_policy_development_plus_showing || row.monthlyDevelopmentShowing || 0),
+        highValueEffective: normalizeMetricValue(basis.bcd_valid || row.highValueEffective || 0),
+        eTotal: normalizeMetricValue(basis.e_total || row.eTotal || 0),
+        listing: normalizeMetricValue(metrics.listing || row.listing || 0),
+        meeting: normalizeMetricValue(metrics.meeting || row.meeting || 0),
+        contract: normalizeMetricValue(metrics.contract || row.contract || 0),
+        showing: normalizeMetricValue(metrics.showing || row.showing || 0),
+        calls: normalizeMetricValue(metrics.calls || row.calls || 0),
+      };
+    }).sort((left, right) =>
+      right.monthlyDevelopmentShowing - left.monthlyDevelopmentShowing ||
+      right.contract - left.contract ||
+      right.listing - left.listing ||
+      right.showing - left.showing ||
+      String(left.employeeId).localeCompare(String(right.employeeId), "zh-Hant")
+    );
+  }
+  const progress = state.progress || buildProgressSnapshot(state.metrics);
+  const metrics = normalizeGameMetrics(progress.sourceMetrics || state.metrics || {});
+  const baseRow = {
+    agent: PROFILE.agent,
+    employeeId: PROFILE.employeeId,
+    branch: PROFILE.branch,
+    monthlyDevelopmentShowing: progress.monthlyMission?.current || 0,
+    highValueEffective: progress.highValue?.current || 0,
+    eTotal: progress.main?.total || 0,
+    listing: metrics.listing,
+    meeting: metrics.meeting,
+    contract: metrics.contract,
+    showing: metrics.showing,
+    calls: metrics.calls,
+  };
+  return [baseRow].sort((left, right) =>
+    right.monthlyDevelopmentShowing - left.monthlyDevelopmentShowing ||
+    right.contract - left.contract ||
+    right.listing - left.listing ||
+    right.showing - left.showing ||
+    String(left.employeeId).localeCompare(String(right.employeeId), "zh-Hant")
+  );
+}
+
+function renderManagerTemporaryTasks() {
+  const target = document.getElementById("managerTemporaryTasks");
+  if (!target) return;
+  const progress = state.progress || buildProgressSnapshot(state.metrics);
+  const highValueRemaining = Math.max(0, progress.highValue.target - progress.highValue.current);
+  const monthlyRemaining = Math.max(0, progress.monthlyMission.target - progress.monthlyMission.current);
+  target.innerHTML = `
+    <article class="manager-card">
+      <span class="summon-kicker">臨時任務</span>
+      <strong>${state.manager.temporaryTaskStarted ? "已開啟" : "未開啟"} · 第一線故事碎片</strong>
+      <p>第一版只讓店長開關任務，不寫死倍率；任務獎勵之後接後端設定。</p>
+      <div class="manager-task-list">
+        <div class="team-topline">
+          <span>B+C+D 有效缺口</span>
+          <span>${formatMetricValue(highValueRemaining)}</span>
+        </div>
+        <div class="team-topline">
+          <span>月任務缺口</span>
+          <span>${formatMetricValue(monthlyRemaining)}</span>
+        </div>
+        <div class="team-topline">
+          <span>成交神殿來源</span>
+          <span>委託 / 見面談 / 簽約</span>
+        </div>
+      </div>
+      <p class="small-text">LINE 目前只保留入口與分享文案，機器人回覆先不接。</p>
+    </article>
+  `;
+}
+
+function renderManagerLeaderboard() {
+  const target = document.getElementById("managerLeaderboard");
+  if (!target) return;
+  const rows = managerLeaderboardRows();
+  target.innerHTML = `
+    <article class="manager-card">
+      <span class="summon-kicker">月榜排序</span>
+      <strong>目前匯入 ${rows.length} 位</strong>
+      <div class="leaderboard-table" role="table" aria-label="店長月榜排序">
+        <div class="leaderboard-row leaderboard-head" role="row">
+          <span>名次</span>
+          <span>同仁</span>
+          <span>開發+帶看</span>
+          <span>委託</span>
+          <span>簽約</span>
+        </div>
+        ${rows.map((row, index) => `
+          <div class="leaderboard-row" role="row">
+            <span>${index + 1}</span>
+            <span>${escapeHtml(row.agent)}<small>${escapeHtml(row.employeeId)}</small></span>
+            <span>${formatMetricValue(row.monthlyDevelopmentShowing)}</span>
+            <span>${formatMetricValue(row.listing)}</span>
+            <span>${formatMetricValue(row.contract)}</span>
+          </div>
+        `).join("")}
+      </div>
+      <p class="small-text">月榜第一與店長加碼屬於可失去獎勵；同仁若選全部重置，不保留這些額外次數。</p>
+    </article>
+  `;
+}
+
+function renderManagerDashboard() {
+  if (!MANAGER_MODE) return;
+  const teamToggle = document.getElementById("teamMissionToggle");
+  if (teamToggle) teamToggle.textContent = state.manager.teamMissionStarted ? "已開始" : "未開始";
+  const bonusToggle = document.getElementById("bonusToggle");
+  if (bonusToggle) bonusToggle.textContent = state.manager.bonusEnabled ? "加碼待設定" : "未加碼";
+  const temporaryTaskToggle = document.getElementById("temporaryTaskToggle");
+  if (temporaryTaskToggle) temporaryTaskToggle.textContent = state.manager.temporaryTaskStarted ? "已開啟" : "未開啟";
+
+  renderManagerTemporaryTasks();
+  renderManagerLeaderboard();
+
+  const tracking = document.getElementById("managerTracking");
+  if (tracking) {
+    const lastImport = state.manager.lastImport;
+    const warnings = state.manager.warnings || [];
+    tracking.innerHTML = `
+      <article class="manager-card">
+        <span class="summon-kicker">追蹤狀態</span>
+        <strong>${lastImport ? "已有匯入紀錄" : "尚未匯入資料"}</strong>
+        <p>${lastImport ? `${escapeHtml(lastImport.period)} · ${new Date(lastImport.at).toLocaleString("zh-TW")}` : "拖移每日報表後，這裡會顯示最近匯入狀態。"}</p>
+        <div class="pool-meta">
+          <span class="soft-pill">團隊任務 ${state.manager.teamMissionStarted ? "開始" : "未開始"}</span>
+          <span class="soft-pill">加碼 ${state.manager.bonusEnabled ? "placeholder" : "關閉"}</span>
+        </div>
+        ${warnings.length ? `<p class="small-text warning-text">${warnings.map(escapeHtml).join("、")}</p>` : `<p class="small-text">目前沒有匯入警告。</p>`}
+      </article>
+    `;
+  }
+
+  const collection = document.getElementById("managerCollection");
+  if (collection) {
+    const counts = collectionCountsByStoryline();
+    const owned = ownedCurrentPetCount();
+    collection.innerHTML = `
+      <article class="manager-card">
+        <span class="summon-kicker">卡片收集成果</span>
+        <strong>總共搜集 ${owned}/${PETS.length} 種</strong>
+        <div class="manager-storyline-list">
+          ${counts.map((item) => `
+            <div class="team-topline">
+              <span>${escapeHtml(item.storyline.name)}</span>
+              <span>${item.owned}/${item.total}</span>
+            </div>
+          `).join("")}
+        </div>
+      </article>
+    `;
+  }
+  const cloudCommitBtn = document.getElementById("cloudCommitBtn");
+  if (cloudCommitBtn) cloudCommitBtn.disabled = !state.manager.cloudImportPreview?.import_id;
+  const status = document.getElementById("cloudImportStatus");
+  if (status && !status.textContent && cloudManagerKeyRequired()) {
+    setCloudImportStatus("真雲端店長操作請使用店長專用入口；管理 key 會自動收進本次瀏覽器工作階段。", "bad");
+  }
+}
+
+function renderCardGameBoard() {
+  const target = document.getElementById("cardGameBoard");
+  if (!target) return;
+  const pet = getActivePet();
+  const owned = getOwned(pet.pet_id);
+  const progress = state.progress || buildProgressSnapshot(state.metrics);
+  target.innerHTML = `
+    <article class="cardgame-card">
+      <div class="mini-pet">${petVisual(pet, owned, "small")}</div>
+      <div>
+        <span class="summon-kicker">今日手牌</span>
+        <strong>${escapeHtml(pet.name)} · ${escapeHtml(currentForm(pet, owned))}</strong>
+        <p>E ${formatMetricValue(progress.main.effective)} / ${formatMetricValue(progress.main.total)}，B+C+D 有效 ${formatMetricValue(progress.highValue.current)}。</p>
+        <p class="small-text">卡牌戰鬥/任務畫面雛形；正式卡牌效果、倍率與掉落率由後端規則接入。</p>
+      </div>
+    </article>
+    <div class="cardgame-actions">
+      <button class="secondary-button" type="button" data-view="gacha">去看抽卡額度</button>
+      <button class="secondary-button" type="button" data-view="collection">整理卡片庫</button>
+    </div>
+  `;
 }
 
 function renderTeamContribution() {
@@ -2752,6 +4037,25 @@ document.addEventListener("click", (event) => {
     if (view === "collection") renderCollection();
   }
   if (target.id === "sampleReportBtn") settleMetrics(SAMPLE_METRICS);
+  if (target.id === "switchEmployeeBtn") switchEmployee();
+  if (target.id === "teamMissionToggle") {
+    state.manager.teamMissionStarted = !state.manager.teamMissionStarted;
+    saveState();
+    render();
+  }
+  if (target.id === "bonusToggle") {
+    state.manager.bonusEnabled = !state.manager.bonusEnabled;
+    state.manager.bonusStatus = state.manager.bonusEnabled ? "placeholder" : "off";
+    saveState();
+    render();
+  }
+  if (target.id === "temporaryTaskToggle") {
+    state.manager.temporaryTaskStarted = !state.manager.temporaryTaskStarted;
+    saveState();
+    render();
+  }
+  if (target.id === "cloudPreviewBtn") previewCloudImport();
+  if (target.id === "cloudCommitBtn") commitCloudImport();
   if (target.id === "backupBtn") downloadProgressBackup();
   if (target.id === "restoreBtn") document.getElementById("backupInput")?.click();
   if (target.id === "resetBtn") requestResetProgress();
@@ -2776,12 +4080,8 @@ document.addEventListener("click", (event) => {
 document.getElementById("csvInput").addEventListener("change", (event) => {
   const file = event.target.files?.[0];
   if (!file) return;
-  const reader = new FileReader();
-  reader.addEventListener("load", () => {
-    settleMetrics(parseCsv(String(reader.result || "")));
-    event.target.value = "";
-  });
-  reader.readAsText(file);
+  handleManagerFile(file);
+  event.target.value = "";
 });
 
 document.getElementById("backupInput").addEventListener("change", (event) => {
@@ -2804,8 +4104,29 @@ document.getElementById("manualReportForm").addEventListener("submit", (event) =
   settleMetrics(readManualMetrics(event.currentTarget));
 });
 
+document.getElementById("employeeLoginForm")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  handleEmployeeLogin(event.currentTarget);
+});
+
+const managerDropZone = document.getElementById("managerDropZone");
+if (managerDropZone) {
+  managerDropZone.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    managerDropZone.classList.add("is-dragover");
+  });
+  managerDropZone.addEventListener("dragleave", () => {
+    managerDropZone.classList.remove("is-dragover");
+  });
+  managerDropZone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    managerDropZone.classList.remove("is-dragover");
+    handleManagerFile(event.dataTransfer?.files?.[0]);
+  });
+}
+
 ensureStarterPet();
 ensureCollectionStoryline();
 render();
-loadExternalContent();
+loadExternalContent().then(loadCloudState);
 registerServiceWorker();

@@ -33,6 +33,55 @@ button {
   cursor: pointer;
 }
 
+[hidden] {
+  display: none !important;
+}
+
+.login-screen {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 20px;
+  background:
+    radial-gradient(circle at 50% 15%, rgba(80, 163, 123, 0.18), transparent 28%),
+    linear-gradient(180deg, #eef3f7 0%, #fff7e5 100%);
+}
+
+.login-card {
+  display: grid;
+  width: min(100%, 360px);
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid rgba(32, 53, 85, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--shadow);
+}
+
+.login-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 8px;
+}
+
+.login-card label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.login-card input {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--ink);
+  background: var(--surface-soft);
+  font-weight: 900;
+}
+
 .app-shell {
   width: min(100%, 480px);
   min-height: 100vh;
@@ -497,7 +546,7 @@ h3 {
   top: 0;
   z-index: 5;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 8px;
   padding: 10px 18px;
   background: rgba(255, 255, 255, 0.92);
@@ -614,6 +663,7 @@ h3 {
 .metrics-grid,
 .pool-grid,
 .collection-grid,
+.bag-grid,
 .team-list,
 .team-contribution,
 .pet-wish,
@@ -636,6 +686,8 @@ h3 {
 .pet-wish-card,
 .pool-card,
 .pet-card,
+.bag-card,
+.reset-rule-card,
 .team-row,
 .team-contribution-card,
 .draw-result-card {
@@ -789,10 +841,245 @@ h3 {
 }
 
 .pool-card,
+.bag-card,
+.reset-rule-card,
 .team-row {
   display: grid;
   gap: 10px;
   padding: 14px;
+}
+
+.bag-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.bag-card strong,
+.reset-rule-card strong {
+  color: var(--navy);
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.bag-card p,
+.reset-rule-card p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.reset-rule-card {
+  margin-top: 12px;
+  border-color: rgba(184, 130, 23, 0.38);
+  background: #fff7df;
+}
+
+.pool-card.is-locked {
+  opacity: 0.72;
+  background: #f8fafc;
+}
+
+.progress-dashboard,
+.manager-grid,
+.manager-status-grid,
+.cardgame-actions,
+.manager-task-list,
+.manager-storyline-list {
+  display: grid;
+  gap: 10px;
+}
+
+.progress-dashboard {
+  margin-top: 12px;
+}
+
+.progress-hero-card,
+.progress-card,
+.manager-card,
+.cardgame-card,
+.manager-drop-zone {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.progress-hero-card,
+.progress-card,
+.manager-card,
+.cardgame-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.progress-hero-card strong {
+  color: var(--navy);
+  font-size: 34px;
+  line-height: 1;
+}
+
+.progress-hero-card.is-celebration {
+  border-color: rgba(184, 130, 23, 0.38);
+  background: #fff7df;
+}
+
+.celebration-pill {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 28px;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #ffe5a8;
+  color: #80560a;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.manager-dashboard {
+  padding: 18px;
+}
+
+.manager-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.manager-drop-zone {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 18px;
+  border-style: dashed;
+  background: #f8fbff;
+}
+
+.manager-drop-zone input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.manager-drop-zone.is-dragover {
+  border-color: var(--green);
+  background: #edf8f2;
+}
+
+.cloud-import-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.cloud-import-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.cloud-import-form input {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--text);
+  font: inherit;
+}
+
+.cloud-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.manager-manual-report {
+  margin-top: 12px;
+}
+
+.manager-status-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 14px;
+}
+
+.manager-status-grid > * {
+  min-width: 0;
+}
+
+.manager-leaderboard,
+.manager-collection {
+  grid-column: 1 / -1;
+}
+
+.manager-task-list {
+  gap: 8px;
+}
+
+.leaderboard-table {
+  display: grid;
+  gap: 6px;
+}
+
+.leaderboard-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1.4fr) minmax(72px, 0.9fr) minmax(52px, 0.7fr) minmax(52px, 0.7fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: #f7f9fb;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.leaderboard-row span {
+  min-width: 0;
+}
+
+.leaderboard-row small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.leaderboard-head {
+  background: #edf3f6;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.warning-text {
+  color: var(--coral);
+  font-weight: 800;
+}
+
+.cardgame-board {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.cardgame-card {
+  grid-template-columns: 92px 1fr;
+  align-items: center;
+}
+
+body.is-manager-mode .hero-band,
+body.is-manager-mode .tabbar,
+body.is-manager-mode .view-panel {
+  display: none;
+}
+
+body:not(.is-manager-mode) .manager-dashboard {
+  display: none;
 }
 
 .team-contribution-card {
@@ -1002,6 +1289,8 @@ h3 {
   }
 
   .metrics-grid,
+  .manager-grid,
+  .manager-status-grid,
   .manual-report,
   .collection-grid,
   .storyline-filter,
@@ -1009,6 +1298,18 @@ h3 {
   .daily-achievement-list,
   .reward-strip {
     grid-template-columns: 1fr;
+  }
+
+  .manager-leaderboard,
+  .manager-collection {
+    grid-column: auto;
+  }
+
+  .leaderboard-row {
+    grid-template-columns: 34px minmax(0, 1.2fr) minmax(58px, 0.8fr) 44px 44px;
+    gap: 6px;
+    padding: 7px;
+    font-size: 12px;
   }
 
   .reward-action-card {
