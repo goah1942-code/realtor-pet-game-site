@@ -1427,13 +1427,7 @@ async function postCloudEnvelope(action, payload = {}) {
   };
   if (CLOUD_API_BASE_URL === "mock") return mockCloudEnvelope(action, body);
   if (typeof fetch !== "function") return null;
-  const response = await fetch(CLOUD_API_BASE_URL, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) throw new Error(`Cloud API ${action} ${response.status}`);
-  return response.json();
+  return fetchCloudEnvelope(action, body);
 }
 
 async function loadCloudState() {
@@ -1493,11 +1487,9 @@ async function previewCloudImport() {
       mode: "preview",
       manager_key: managerKey,
       operating_period: currentPeriodKey(),
-      source: {
-        kind: "google_sheet_id",
-        spreadsheet_id: spreadsheetId,
-        file_name: "店長匯入 Google Sheet",
-      },
+      source_kind: "google_sheet_id",
+      spreadsheet_id: spreadsheetId,
+      file_name: "店長匯入 Google Sheet",
     });
     const data = cloudEnvelopeData(envelope, "uploadImport");
     if (!data || !data.import_id) throw new Error(envelope?.errors?.[0]?.message || "preview missing import_id");
