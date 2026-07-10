@@ -2767,7 +2767,7 @@ function mockCloudEnvelope(action, payload = {}) {
         period,
         reset_count: players.length,
         players: players.map((player, index) => ({ uid: player.uid, agent_name: player.agent_name, reset_id: `mock_reset_${index + 1}` })),
-        retained: { staff_source_metrics: true, imports: true, staff_report_points_recomputed: true, manager_test_metrics: false },
+        retained: { source_metrics: true, imports: true, report_points_recomputed: true, manager_test_metrics: true },
       },
       warnings: [],
       errors: [],
@@ -7087,7 +7087,7 @@ async function managerResetTestData(scope = "manager") {
     ? "全部玩家（含店長與秘書）"
     : "店長測試帳號 293127";
   const confirmed = typeof window !== "object" || typeof window.confirm !== "function" || window.confirm(
-    `確定重置${targetText}？卡片、寵物、星魂、素材、抽卡紀錄與免費抽會清空。店長手動測試數據也會清空；同仁 Excel 與匯入資料保留。`,
+    `確定重置${targetText}的遊戲進度？卡片、寵物、星魂、素材、抽卡紀錄、免費抽與加碼會清空；所有累積數據都保留。`,
   );
   if (!confirmed) return false;
 
@@ -7107,7 +7107,7 @@ async function managerResetTestData(scope = "manager") {
     const data = cloudEnvelopeData(envelope, "managerTestReset");
     if (!data) throw new Error(envelope?.errors?.[0]?.message || "managerTestReset response missing data");
     await loadCloudState();
-    state.manager.testResetStatus = `重置完成：${data.reset_count || 0} 位。店長測試數據已清空，同仁報表仍保留。`;
+    state.manager.testResetStatus = `重置完成：${data.reset_count || 0} 位。所有累積數據均已保留，遊戲進度已重新開始。`;
     state.manager.testResetTone = "good";
     return true;
   } catch (error) {
