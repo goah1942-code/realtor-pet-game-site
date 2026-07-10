@@ -452,6 +452,7 @@ const GAME_SOURCE_METRICS = [
   ["price", "改附表"],
   ["meeting", "見面談"],
   ["contract", "簽約"],
+  ["performance", "業績"],
 ];
 
 const METRIC_LABELS = GAME_SOURCE_METRICS;
@@ -476,6 +477,7 @@ const SAMPLE_METRICS = {
   price: 1,
   meeting: 2,
   contract: 0,
+  performance: 0,
 };
 
 const TEAM_GOALS = [
@@ -496,7 +498,8 @@ const ENTRY_SCREEN_METRICS = [
   ["meeting", "見面談（斡旋）"],
   ["offer", "斡旋"],
   ["price", "附表"],
-  ["contract", "成件 / 業績"],
+  ["contract", "成件"],
+  ["performance", "業績"],
 ];
 
 const ENTRY_SCREEN_SUMMARY_METRICS = [
@@ -526,7 +529,7 @@ const SPIRIT_FOOD_RESULT_ITEMS = [
   { key: "price", label: "附表", unit: "件", hintSubject: "附表", rewardText: "會先記錄成果食糧。" },
   { key: "offer", label: "斡旋", unit: "件", hintSubject: "斡旋", rewardText: "會先記錄成果食糧。" },
   { key: "contract", label: "成件", unit: "件", decimals: 1, hintSubject: "成件", rewardText: "可推進成交神殿祝福。" },
-  { key: "contract", label: "業績", unit: "筆", hintSubject: "業績", rewardText: "目前先跟成件來源一起累積。" },
+  { key: "performance", label: "業績", unit: "", hintSubject: "業績", rewardText: "只顯示成果，不重複計算成件獎勵。" },
 ];
 
 const HOME_METRIC_ITEMS = [
@@ -535,7 +538,7 @@ const HOME_METRIC_ITEMS = [
   { key: "negotiation", label: "回報", unit: "組", tone: "activity" },
   { key: "listing", label: "委託", unit: "間", tone: "result" },
   { key: "contract", label: "成件", unit: "件", tone: "result", decimals: 1 },
-  { key: "contract", label: "業績", unit: "筆", tone: "result" },
+  { key: "performance", label: "業績", unit: "", tone: "result" },
 ];
 
 const HOME_TICKET_NUDGES = {
@@ -559,7 +562,7 @@ const HOME_HERO_RESULT_ITEMS = [
   { key: "price", label: "二附", unit: "件" },
   { key: "offer", label: "斡旋", unit: "件" },
   { key: "contract", label: "成件", unit: "件", decimals: 1 },
-  { key: "contract", label: "業績", unit: "筆" },
+  { key: "performance", label: "業績", unit: "" },
 ];
 
 function buildEntryScreenKpis(metricsSource = {}) {
@@ -2101,7 +2104,10 @@ function normalizeReportPeriodKey(value) {
 
 function readCloudManagerKey() {
   try {
-    return cleanProfileText(sessionStorage.getItem(CLOUD_MANAGER_KEY_STORAGE) || "", "", 160);
+    const sessionKey = cleanProfileText(sessionStorage.getItem(CLOUD_MANAGER_KEY_STORAGE) || "", "", 160);
+    const savedKey = cleanProfileText(localStorage.getItem(CLOUD_MANAGER_KEY_STORAGE) || "", "", 160);
+    if (sessionKey && !savedKey) localStorage.setItem(CLOUD_MANAGER_KEY_STORAGE, sessionKey);
+    return sessionKey || savedKey;
   } catch {
     return "";
   }
@@ -2127,8 +2133,13 @@ function captureCloudManagerKeyFromUrl() {
 function writeCloudManagerKey(value) {
   const key = cleanProfileText(value, "", 160);
   try {
-    if (key) sessionStorage.setItem(CLOUD_MANAGER_KEY_STORAGE, key);
-    else sessionStorage.removeItem(CLOUD_MANAGER_KEY_STORAGE);
+    if (key) {
+      sessionStorage.setItem(CLOUD_MANAGER_KEY_STORAGE, key);
+      localStorage.setItem(CLOUD_MANAGER_KEY_STORAGE, key);
+    } else {
+      sessionStorage.removeItem(CLOUD_MANAGER_KEY_STORAGE);
+      localStorage.removeItem(CLOUD_MANAGER_KEY_STORAGE);
+    }
   } catch {
     return false;
   }
@@ -2246,6 +2257,9 @@ function createInitialState() {
       testResetBusy: false,
       testResetStatus: "",
       testResetTone: "",
+      testMetricsBusy: false,
+      testMetricsStatus: "",
+      testMetricsTone: "",
     },
     backendConfig: {
       dropRates: {},
@@ -2706,6 +2720,25 @@ function mockCloudEnvelope(action, payload = {}) {
           { uid: "490326", agent_name: "蔡晉豪", event_basis: { monthly_policy_development_plus_showing: 6, bcd_valid: 7 }, source_metrics: SAMPLE_METRICS, draw_points_balance: 8, collection_count: 2, updated_at: new Date().toISOString() },
           { uid: "490101", agent_name: "示範同仁A", event_basis: { monthly_policy_development_plus_showing: 12, bcd_valid: 5 }, source_metrics: { ...SAMPLE_METRICS, listing: 2, contract: 1, showing: 5 }, draw_points_balance: 4, collection_count: 4, updated_at: new Date().toISOString() },
         ],
+        manager_test_player: {
+          uid: "293127",
+          agent_name: "游榮哲",
+          source_metrics: {
+            a_area_total: { valid: 2, total: 2 },
+            b_development_total: { valid: 4, total: 4 },
+            c_negotiation_total: { valid: 1, total: 1 },
+            d_sales_total: { valid: 2, total: 2 },
+            d_showing_group: { valid: 2, total: 2 },
+            e_total_group: { valid: 9, total: 9 },
+            calls: { valid: 36, total: 36 },
+            listing: { valid: 1, total: 1 },
+            meeting_or_offer: { valid: 1, total: 1 },
+            contract: { valid: 0, total: 0 },
+            test_offer: { valid: 1, total: 1 },
+            test_performance: { valid: 80, total: 80 },
+          },
+          event_basis: { e_valid: 9, e_total: 9 },
+        },
         collection_summary: {
           total_owned_kinds: 6,
           by_storyline: collectionCountsByStoryline().map((item) => ({ storyline_id: item.storyline.storyline_id, name: item.storyline.name, owned: item.owned, total: item.total })),
@@ -2717,11 +2750,14 @@ function mockCloudEnvelope(action, payload = {}) {
     };
   }
   if (action === "managerTestReset") {
-    const dashboardPlayers = mockCloudEnvelope("managerDashboard").data.players;
-    const scope = payload.scope === "all_active" ? "all_active" : "player";
-    const players = scope === "all_active"
-      ? dashboardPlayers
-      : dashboardPlayers.filter((player) => String(player.uid) === String(payload.uid || ""));
+    const scope = payload.scope === "all_players" ? "all_players" : "manager";
+    const players = scope === "all_players"
+      ? [
+        ...mockCloudEnvelope("managerDashboard").data.players,
+        { uid: "293127", agent_name: "游榮哲" },
+        { uid: "327350", agent_name: "王若馨" },
+      ]
+      : [{ uid: "293127", agent_name: "游榮哲" }];
     return {
       ok: true,
       action,
@@ -2731,8 +2767,32 @@ function mockCloudEnvelope(action, payload = {}) {
         period,
         reset_count: players.length,
         players: players.map((player, index) => ({ uid: player.uid, agent_name: player.agent_name, reset_id: `mock_reset_${index + 1}` })),
-        retained: { source_metrics: true, imports: true, report_points_recomputed: true },
+        retained: { staff_source_metrics: true, imports: true, staff_report_points_recomputed: true, manager_test_metrics: false },
       },
+      warnings: [],
+      errors: [],
+    };
+  }
+  if (action === "managerTestMetrics") {
+    const sourceMetrics = {
+      a_area_total: { valid: Number(payload.area || 0), total: Number(payload.area || 0) },
+      b_development_total: { valid: Number(payload.development || 0), total: Number(payload.development || 0) },
+      c_negotiation_total: { valid: Number(payload.negotiation || 0), total: Number(payload.negotiation || 0) },
+      d_sales_total: { valid: Number(payload.showing || 0), total: Number(payload.showing || 0) },
+      d_showing_group: { valid: Number(payload.showing || 0), total: Number(payload.showing || 0) },
+      e_total_group: { valid: Number(payload.area || 0) + Number(payload.development || 0) + Number(payload.negotiation || 0) + Number(payload.showing || 0), total: Number(payload.area || 0) + Number(payload.development || 0) + Number(payload.negotiation || 0) + Number(payload.showing || 0) },
+      calls: { valid: Number(payload.calls || 0), total: Number(payload.calls || 0) },
+      listing: { valid: Number(payload.listing || 0), total: Number(payload.listing || 0) },
+      meeting_or_offer: { valid: Number(payload.offer || 0), total: Number(payload.offer || 0) },
+      contract: { valid: Number(payload.contract || 0), total: Number(payload.contract || 0) },
+      test_offer: { valid: Number(payload.offer || 0), total: Number(payload.offer || 0) },
+      test_performance: { valid: Number(payload.performance || 0), total: Number(payload.performance || 0) },
+    };
+    return {
+      ok: true,
+      action,
+      server_time: new Date().toISOString(),
+      data: { uid: "293127", period: payload.period || period, source_metrics: sourceMetrics, ranking_eligible: false },
       warnings: [],
       errors: [],
     };
@@ -3283,6 +3343,7 @@ function rawReportMetricValue(metrics, key, side = "valid") {
 }
 
 function excelGameMetrics(metrics) {
+  const hasTestOffer = isPlainObject(metrics?.test_offer);
   return normalizeGameMetrics({
     area: rawReportMetricValue(metrics, "a_area_total", "total"),
     development: rawReportMetricValue(metrics, "b_development_total", "valid"),
@@ -3291,10 +3352,11 @@ function excelGameMetrics(metrics) {
     momentum: rawReportMetricValue(metrics, "d1_schedule", "total") + rawReportMetricValue(metrics, "d1_face_schedule", "total"),
     calls: rawReportMetricValue(metrics, "calls", "valid"),
     listing: rawReportMetricValue(metrics, "listing", "valid") + rawReportMetricValue(metrics, "rent_listing", "valid"),
-    offer: 0,
+    offer: hasTestOffer ? rawReportMetricValue(metrics, "test_offer", "valid") : 0,
     price: rawReportMetricValue(metrics, "price_revision", "valid"),
-    meeting: rawReportMetricValue(metrics, "meeting_or_offer", "valid") + rawReportMetricValue(metrics, "rent_meeting_or_offer", "valid"),
+    meeting: hasTestOffer ? 0 : rawReportMetricValue(metrics, "meeting_or_offer", "valid") + rawReportMetricValue(metrics, "rent_meeting_or_offer", "valid"),
     contract: rawReportMetricValue(metrics, "contract", "valid") + rawReportMetricValue(metrics, "rent_contract", "valid"),
+    performance: rawReportMetricValue(metrics, "test_performance", "valid"),
   });
 }
 
@@ -6990,41 +7052,23 @@ function renderManagerLeaderboard() {
   `;
 }
 
-function managerResetRows() {
-  const rows = Array.isArray(state.manager.cloudDashboard?.players) ? state.manager.cloudDashboard.players : [];
-  const seen = new Set();
-  return rows.reduce((items, player) => {
-    const uid = cleanEmployeeId(player.uid || player.employee_id || "");
-    if (!uid || seen.has(uid)) return items;
-    seen.add(uid);
-    items.push({ uid, name: cleanProfileText(player.agent_name || player.agent || uid, uid, 24) });
-    return items;
-  }, []);
-}
-
 function renderManagerResetTools() {
-  const input = document.getElementById("managerResetUid");
-  const options = document.getElementById("managerResetPlayerOptions");
-  const singleButton = document.getElementById("managerResetPlayerBtn");
+  const managerButton = document.getElementById("managerResetManagerBtn");
   const allButton = document.getElementById("managerResetAllBtn");
   const status = document.getElementById("managerResetStatus");
-  if (!input || !options || !singleButton || !allButton || !status) return;
+  if (!managerButton || !allButton || !status) return;
 
-  const rows = managerResetRows();
-  options.innerHTML = rows.map((row) => `<option value="${escapeHtml(row.uid)}">${escapeHtml(row.name)}</option>`).join("");
-  if (!input.value && rows[0]) input.value = rows[0].uid;
   const busy = Boolean(state.manager.testResetBusy);
-  input.disabled = busy;
-  singleButton.disabled = busy;
-  allButton.disabled = busy || rows.length === 0;
-  singleButton.textContent = busy ? "重置中..." : "重置所選同仁";
-  allButton.textContent = busy ? "重置中..." : `重置全店測試進度${rows.length ? `（${rows.length}位）` : ""}`;
+  managerButton.disabled = busy;
+  allButton.disabled = busy;
+  managerButton.textContent = busy ? "重置中..." : "只重置店長";
+  allButton.textContent = busy ? "重置中..." : "重置全部玩家";
   status.textContent = state.manager.testResetStatus || "";
   status.classList.toggle("is-good", state.manager.testResetTone === "good");
   status.classList.toggle("is-bad", state.manager.testResetTone === "bad");
 }
 
-async function managerResetTestData(scope = "player") {
+async function managerResetTestData(scope = "manager") {
   if (!MANAGER_MODE) return false;
   if (!CLOUD_API_BASE_URL) {
     state.manager.testResetStatus = "測試重置需要正式雲端 API。";
@@ -7039,27 +7083,11 @@ async function managerResetTestData(scope = "player") {
     return false;
   }
 
-  const rows = managerResetRows();
-  const uid = cleanEmployeeId(document.getElementById("managerResetUid")?.value || "");
-  const selected = rows.find((row) => row.uid === uid);
-  if (scope === "player" && !uid) {
-    state.manager.testResetStatus = "請先選擇或輸入員編。";
-    state.manager.testResetTone = "bad";
-    renderManagerResetTools();
-    return false;
-  }
-  if (scope === "all_active" && rows.length === 0) {
-    state.manager.testResetStatus = "目前沒有可重置的 active 同仁。";
-    state.manager.testResetTone = "bad";
-    renderManagerResetTools();
-    return false;
-  }
-
-  const targetText = scope === "all_active"
-    ? `全店 ${rows.length} 位同仁`
-    : `${selected?.name || "員編"} ${uid}`;
+  const targetText = scope === "all_players"
+    ? "全部玩家（含店長與秘書）"
+    : "店長測試帳號 293127";
   const confirmed = typeof window !== "object" || typeof window.confirm !== "function" || window.confirm(
-    `確定重置${targetText}的測試遊戲進度？卡片、寵物、星魂、素材、抽卡紀錄與免費抽會清空；Excel 與匯入資料保留。`,
+    `確定重置${targetText}？卡片、寵物、星魂、素材、抽卡紀錄與免費抽會清空。店長手動測試數據也會清空；同仁 Excel 與匯入資料保留。`,
   );
   if (!confirmed) return false;
 
@@ -7072,7 +7100,6 @@ async function managerResetTestData(scope = "player") {
     const envelope = await postCloudEnvelope("managerTestReset", {
       manager_key: getCloudManagerKey(),
       scope,
-      uid: scope === "player" ? uid : "",
       period: state.manager.cloudDashboard?.period || currentPeriodKey(),
       confirm_text: "RESET_TEST_GAME_STATE",
       client_request_id: randomClientId("manager-reset"),
@@ -7080,7 +7107,7 @@ async function managerResetTestData(scope = "player") {
     const data = cloudEnvelopeData(envelope, "managerTestReset");
     if (!data) throw new Error(envelope?.errors?.[0]?.message || "managerTestReset response missing data");
     await loadCloudState();
-    state.manager.testResetStatus = `重置完成：${data.reset_count || 0} 位。報表與匯入資料已保留。`;
+    state.manager.testResetStatus = `重置完成：${data.reset_count || 0} 位。店長測試數據已清空，同仁報表仍保留。`;
     state.manager.testResetTone = "good";
     return true;
   } catch (error) {
@@ -7089,6 +7116,83 @@ async function managerResetTestData(scope = "player") {
     return false;
   } finally {
     state.manager.testResetBusy = false;
+    saveState();
+    render();
+  }
+}
+
+function managerTestMetricsFromDashboard() {
+  const player = state.manager.cloudDashboard?.manager_test_player || {};
+  const source = player.source_metrics || {};
+  const read = (rawKey, flatKey, side = "valid") => {
+    if (isPlainObject(source[rawKey])) return metricPairValue(source, rawKey, side);
+    return normalizeMetricValue(source[flatKey]);
+  };
+  return {
+    area: read("a_area_total", "area", "total"),
+    development: read("b_development_total", "development"),
+    negotiation: read("c_negotiation_total", "negotiation"),
+    showing: read("d_showing_group", "showing"),
+    calls: read("calls", "calls"),
+    listing: read("listing", "listing") + read("rent_listing", "rent_listing"),
+    offer: read("test_offer", "offer"),
+    contract: read("contract", "contract") + read("rent_contract", "rent_contract"),
+    performance: read("test_performance", "performance"),
+  };
+}
+
+function renderManagerTestMetrics() {
+  const form = document.getElementById("managerTestMetricsForm");
+  const submit = document.getElementById("managerTestMetricsSubmit");
+  const status = document.getElementById("managerTestMetricsStatus");
+  if (!form || !submit || !status) return;
+  const values = managerTestMetricsFromDashboard();
+  if (!state.manager.testMetricsBusy) {
+    form.elements.period.value = state.manager.cloudDashboard?.period || currentPeriodKey();
+    Object.entries(values).forEach(([key, value]) => {
+      if (form.elements[key]) form.elements[key].value = formatMetricValue(value);
+    });
+  }
+  Array.from(form.elements).forEach((element) => { element.disabled = Boolean(state.manager.testMetricsBusy); });
+  submit.textContent = state.manager.testMetricsBusy ? "套用中..." : "套用到店長帳號";
+  status.textContent = state.manager.testMetricsStatus || "";
+  status.classList.toggle("is-good", state.manager.testMetricsTone === "good");
+  status.classList.toggle("is-bad", state.manager.testMetricsTone === "bad");
+}
+
+async function saveManagerTestMetrics(form) {
+  if (!MANAGER_MODE) return false;
+  if (cloudManagerKeyRequired()) {
+    state.manager.testMetricsStatus = "管理網址缺少 manager_key，請重新開啟店長專用入口。";
+    state.manager.testMetricsTone = "bad";
+    renderManagerTestMetrics();
+    return false;
+  }
+  const fieldKeys = ["area", "development", "negotiation", "showing", "calls", "listing", "offer", "contract", "performance"];
+  const payload = Object.fromEntries(fieldKeys.map((key) => [key, Math.max(0, Number(form.elements[key]?.value || 0))]));
+  payload.period = form.elements.period?.value || currentPeriodKey();
+  state.manager.testMetricsBusy = true;
+  state.manager.testMetricsStatus = "正在套用店長測試數據...";
+  state.manager.testMetricsTone = "";
+  renderManagerTestMetrics();
+  try {
+    const envelope = await postCloudEnvelope("managerTestMetrics", {
+      manager_key: getCloudManagerKey(),
+      ...payload,
+      client_request_id: randomClientId("manager-test-metrics"),
+    });
+    const data = cloudEnvelopeData(envelope, "managerTestMetrics");
+    if (!data) throw new Error(envelope?.errors?.[0]?.message || "managerTestMetrics response missing data");
+    await loadCloudState();
+    state.manager.testMetricsStatus = `已套用到店長帳號 293127；本月行程 ${formatMetricValue(payload.area + payload.development + payload.negotiation + payload.showing)}，業績 ${formatMetricValue(payload.performance)}。`;
+    state.manager.testMetricsTone = "good";
+    return true;
+  } catch (error) {
+    state.manager.testMetricsStatus = `套用失敗：${error.message || "unknown"}`;
+    state.manager.testMetricsTone = "bad";
+    return false;
+  } finally {
+    state.manager.testMetricsBusy = false;
     saveState();
     render();
   }
@@ -7107,6 +7211,7 @@ function renderManagerDashboard() {
   renderManagerImportAudit();
   renderManagerLeaderboard();
   renderManagerResetTools();
+  renderManagerTestMetrics();
 
   const tracking = document.getElementById("managerTracking");
   if (tracking) {
@@ -7525,8 +7630,8 @@ document.addEventListener("click", (event) => {
   }
   if (target.id === "cloudPreviewBtn") previewCloudImport();
   if (target.id === "cloudCommitBtn") commitCloudImport();
-  if (target.id === "managerResetPlayerBtn") managerResetTestData("player");
-  if (target.id === "managerResetAllBtn") managerResetTestData("all_active");
+  if (target.id === "managerResetManagerBtn") managerResetTestData("manager");
+  if (target.id === "managerResetAllBtn") managerResetTestData("all_players");
   if (target.id === "backupBtn") downloadProgressBackup();
   if (target.id === "restoreBtn") document.getElementById("backupInput")?.click();
   if (target.id === "resetBtn") requestResetProgress();
@@ -7573,9 +7678,9 @@ document.getElementById("backupInput").addEventListener("change", (event) => {
   reader.readAsText(file);
 });
 
-document.getElementById("manualReportForm").addEventListener("submit", (event) => {
+document.getElementById("managerTestMetricsForm")?.addEventListener("submit", (event) => {
   event.preventDefault();
-  settleMetrics(readManualMetrics(event.currentTarget));
+  saveManagerTestMetrics(event.currentTarget);
 });
 
 document.getElementById("employeeLoginForm")?.addEventListener("submit", (event) => {

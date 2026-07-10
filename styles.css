@@ -2784,7 +2784,7 @@ h3 {
 
 .manager-reset-controls {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: end;
   gap: 8px;
 }
@@ -2820,6 +2820,18 @@ h3 {
 .danger-button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.manager-test-data {
+  margin-top: 12px;
+}
+
+.manager-test-data .manual-report {
+  margin-top: 12px;
+}
+
+.manager-test-data .manual-submit {
+  grid-column: 1 / -1;
 }
 
 .manager-manual-report {
@@ -3570,7 +3582,8 @@ body:not(.is-manager-mode) .manager-dashboard {
   }
 
   .manager-reset-controls .secondary-button,
-  .manager-reset-controls .danger-button {
+  .manager-reset-controls .danger-button,
+  .manager-test-data #managerTestPlayerLink {
     width: 100%;
   }
 
