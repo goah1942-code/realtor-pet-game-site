@@ -7569,8 +7569,26 @@ function petAccessorySvg(trait, accent, dark) {
   return "";
 }
 
-function petImageUrl(pet, size) {
+function petVisualStage(pet, owned) {
+  if (!pet || !owned) return "";
+  if (owned.ultimate || owned.awakened) return owned.ultimate ? "stage_05_mature" : "stage_04_awakened";
+  if (Number(owned.star || 1) >= 5 || Number(owned.level || 1) >= 10) return "stage_05_mature";
+  if (Number(owned.level || 1) >= 6) return "stage_03_growth";
+  if (Number(owned.level || 1) >= 3) return "stage_02_young";
+  return "stage_01_initial";
+}
+
+function petStageImageUrl(pet, owned, size) {
+  const stage = petVisualStage(pet, owned);
+  if (!stage || !pet?.pet_id) return "";
+  const suffix = size === "small" ? "-thumb" : "";
+  return normalizePetAssetUrl(`assets/pets/stages/${pet.pet_id}-${stage}-v2${suffix}.webp`);
+}
+
+function petImageUrl(pet, size, owned = null) {
   if (!pet) return "";
+  const stageAsset = petStageImageUrl(pet, owned, size);
+  if (stageAsset) return stageAsset;
   const preferred = size === "small" ? pet.thumbnail_url || pet.image_url : pet.image_url || pet.thumbnail_url;
   return normalizePetAssetUrl(preferred);
 }
@@ -7608,13 +7626,14 @@ function drawResultVisual(pet, owned, draw, size) {
 }
 
 function petVisual(pet, owned, size) {
-  const assetUrl = petImageUrl(pet, size);
+  const stage = petVisualStage(pet, owned);
+  const assetUrl = petImageUrl(pet, size, owned);
   if (!assetUrl) return petSvg(pet, owned, size);
   const trait = petVisualTrait(pet);
   const opacity = owned ? 1 : 0.45;
-  const alt = `${pet.name} ${trait.label}`;
+  const alt = `${pet.name} ${stage || trait.label}`;
   return `
-    <div class="pet-art-frame pet-art-${size}" data-visual="${trait.key}" style="opacity:${opacity}">
+    <div class="pet-art-frame pet-art-${size}" data-visual="${trait.key}" data-stage="${stage}" style="opacity:${opacity}">
       <img class="pet-art-image" src="${escapeHtml(assetUrl)}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async">
     </div>
   `;
