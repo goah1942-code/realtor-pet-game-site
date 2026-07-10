@@ -18,6 +18,7 @@ const CONTRACT_TEMPLE_STORYLINE_IDS = new Set(["contract", "sl_contract_team_san
 const PROFILE = readEntryProfile();
 const STORAGE_KEY = `${LEGACY_STORAGE_KEY}:${PROFILE.userKey}`;
 const HOME_OPENING_STORAGE_KEY = `${STORAGE_KEY}:home-opening-v17`;
+const PRODUCTION_CLOUD_API_BASE_URL = "https://script.google.com/macros/s/AKfycbwUGu1SSwNJxJZqZU5RX7dZC095_1QOS_XHgH_vu7Hw1x2LG99aoR6Eedpm4ntG5VI/exec";
 const CLOUD_API_BASE_URL = readCloudApiBaseUrl();
 captureCloudManagerKeyFromUrl();
 let homeOpeningStateCache = null;
@@ -1739,7 +1740,10 @@ function readCloudApiBaseUrl() {
   const params = typeof URLSearchParams === "function" ? new URLSearchParams(search) : null;
   if (!params) return "";
   const raw = String(params.get("api") || params.get("cloudApi") || "").trim();
-  if (!raw) return "";
+  if (!raw) {
+    const hostname = typeof location === "object" ? String(location.hostname || "").toLowerCase() : "";
+    return hostname === "goah1942-code.github.io" ? PRODUCTION_CLOUD_API_BASE_URL : "";
+  }
   if (raw === "mock") return "mock";
   try {
     const url = new URL(raw);
@@ -2593,7 +2597,7 @@ function cloudPlayerStateToSnapshot(data = {}) {
     collection: ownedCollection,
     backendConfig: data.backend_config || data.backendConfig || {},
     settlementSummary: data.latestSettlement || data.latest_settlement || data.settlement_summary || data.settlementSummary || data.latest_reward_event || data.reward_summary || data.rewardSummary || null,
-    replaceInventory: Boolean(data.reset_cleared || data.reset?.cleared),
+    replaceInventory: true,
   };
   if (data.active_pet?.pet_id) snapshot.activePetId = data.active_pet.pet_id;
   return snapshot;
