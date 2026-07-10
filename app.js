@@ -283,22 +283,23 @@ const GACHA_CONFIG_INTERFACE = {
 };
 const INTERNAL_DRAW_PACING_CONFIG = {
   monthlyGoal: "每天有小進度、每週有一次明顯爽點、月底看得到主寵養成成果。",
-  defaultOutcomeWeights: { pet: 8, egg: 22, essence: 70 },
+  // Local/offline fallback only. The live API is the source of truth for real draws.
+  defaultOutcomeWeights: { pet: 2, egg: 5, essence: 93 },
   pools: {
     general: {
-      outcomeWeights: { pet: 20, egg: 25, essence: 55 },
+      outcomeWeights: { pet: 0, egg: 5, essence: 95 },
       publicCue: "免費卡池：有做就能累積抽數，完整卡機率由本月節奏控制。",
     },
     boosted: {
-      outcomeWeights: { pet: 10, egg: 25, essence: 65 },
+      outcomeWeights: { pet: 2, egg: 8, essence: 90 },
       publicCue: "高價值行動池：更適合推進主寵孵化與升星。",
     },
     result: {
-      outcomeWeights: { pet: 16, egg: 28, essence: 56 },
+      outcomeWeights: { pet: 5, egg: 12, essence: 83 },
       publicCue: "成果種子池：委託與見面談要比一般行程更有爽感。",
     },
     blessing: {
-      outcomeWeights: { pet: 34, egg: 21, essence: 45 },
+      outcomeWeights: { pet: 15, egg: 15, essence: 70 },
       publicCue: "成交神殿池：0.1 件也會累積回饋，高價值成果優先給寵物級回饋。",
     },
   },
@@ -1745,7 +1746,12 @@ function readCloudApiBaseUrl() {
   const raw = String(params.get("api") || params.get("cloudApi") || "").trim();
   if (!raw) {
     const hostname = typeof location === "object" ? String(location.hostname || "").toLowerCase() : "";
-    return hostname === "goah1942-code.github.io" ? PRODUCTION_CLOUD_API_BASE_URL : "";
+    const protocol = typeof location === "object" ? String(location.protocol || "") : "";
+    // Opening index.html directly is a supported manager test path. Use the same
+    // player state as the public site instead of reviving stale browser-only data.
+    return hostname === "goah1942-code.github.io" || protocol === "file:"
+      ? PRODUCTION_CLOUD_API_BASE_URL
+      : "";
   }
   if (raw === "mock") return "mock";
   try {
