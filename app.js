@@ -4116,6 +4116,12 @@ function normalizeGuaranteedDraws(draws = {}) {
   return Object.fromEntries(GUARANTEED_DRAW_POOLS.map((pool) => [pool.key, Math.max(0, rewardCount(source[pool.key] || 0))]));
 }
 
+function guaranteedTargetTier(target = {}) {
+  const current = Math.max(0, Number(target.current || 0));
+  const threshold = Math.max(0, Number(target.target || 0));
+  return threshold > 0 ? Math.floor((current + 0.000000001) / threshold) : 0;
+}
+
 function regularTicketTotal() {
   return Object.values(state.tickets || {}).reduce((sum, value) => sum + Number(value || 0), 0);
 }
@@ -5865,12 +5871,14 @@ function renderGuaranteedDrawPools() {
     const balance = balances[pool.key] || 0;
     const candidates = guaranteedPoolCandidates(pool);
     const ready = balance > 0 && candidates.length > 0;
+    const earnedTiers = guaranteedTargetTier(target);
+    const nextThreshold = (earnedTiers + 1) * Number(target.target || 0);
     const targetText = `${formatProgressValue(target.current || 0, target.decimals)} / ${formatProgressValue(target.target, target.decimals)} ${target.unit}`;
     const statusText = ready
       ? `可抽 ${balance} 張完整寵物卡`
-      : target.done
-        ? "本月已達標，保證抽已使用或等待同步"
-        : `達標即取得 1 張保證抽 · ${targetText}`;
+      : earnedTiers > 0
+        ? `已完成 ${earnedTiers} 個基礎區間；下一張累積到 ${formatProgressValue(nextThreshold, target.decimals)} ${target.unit}`
+        : `每累積 ${formatProgressValue(target.target, target.decimals)} ${target.unit}取得 1 張保證抽 · 目前 ${formatProgressValue(target.current || 0, target.decimals)}`;
     return `
       <article class="pool-card ${escapeHtml(pool.theme)} ${ready ? "is-ready" : "is-unlockable"}">
         <span class="summon-kicker">每月工作保證卡</span>
@@ -5882,9 +5890,9 @@ function renderGuaranteedDrawPools() {
         <p class="assist-line">抽取結果保證是這條故事線的完整寵物卡；重複卡固定轉成 1 星魂。</p>
         <div class="pool-meta">
           <span class="soft-pill">${candidates.length} 張候選卡</span>
-          <span class="soft-pill">每條每月一次</span>
+          <span class="soft-pill">每達 1 段再得 1 張</span>
         </div>
-        <button class="${ready ? "primary-button" : "secondary-button"}" type="button" ${ready ? `data-draw="${escapeHtml(pool.poolKey)}"` : "disabled"}>${ready ? "抽保證寵物卡" : target.done ? "等待同步或本月已領" : "尚未達標"}</button>
+        <button class="${ready ? "primary-button" : "secondary-button"}" type="button" ${ready ? `data-draw="${escapeHtml(pool.poolKey)}"` : "disabled"}>${ready ? "抽保證寵物卡" : earnedTiers > 0 ? "下一段累積中" : "尚未達標"}</button>
         ${buildPoolInlineDrawResult({ key: pool.poolKey })}
       </article>
     `;
