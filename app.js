@@ -2517,7 +2517,7 @@ function cloudPlayerStateToSnapshot(data = {}) {
     specialResources: resources.special_resources || resources.specialResources || {},
     collection: ownedCollection,
     backendConfig: data.backend_config || data.backendConfig || {},
-    settlementSummary: data.latest_settlement || data.settlement_summary || data.settlementSummary || data.latest_reward_event || data.reward_summary || data.rewardSummary || null,
+    settlementSummary: data.latestSettlement || data.latest_settlement || data.settlement_summary || data.settlementSummary || data.latest_reward_event || data.reward_summary || data.rewardSummary || null,
     replaceInventory: Boolean(data.reset_cleared || data.reset?.cleared),
   };
   if (data.active_pet?.pet_id) snapshot.activePetId = data.active_pet.pet_id;
@@ -2579,6 +2579,12 @@ function mockCloudEnvelope(action, payload = {}) {
         awarded_metrics: SAMPLE_METRICS,
         event_basis: { e_daily_numerator: 7, e_valid: 7, e_total: 16, valid_days: 4, bcd_valid: 7, monthly_policy_development_plus_showing: 6 },
         latest_delta: { ...normalizeGameMetrics(SAMPLE_METRICS), calls: 5 },
+        latestSettlement: {
+          status: "changed",
+          message: "本次已入帳：帶看 +1 組。",
+          work_delta: { showing_group_valid: 1 },
+          rewards_delta: { tickets: { general: 1 } },
+        },
         resources: {
           draw_points: { report_points: 8, daily_free: 3, bonus_draw: 0 },
           tickets: { general: 6, boosted: 2, result: 3, blessing: 0 },
