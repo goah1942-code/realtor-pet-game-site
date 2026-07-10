@@ -24,7 +24,7 @@
     <link rel="icon" href="./assets/app-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./assets/app-icon-512.png" />
     <link rel="manifest" href="./site.webmanifest" />
-    <link rel="stylesheet" href="./styles.css?v=20260710-repeat-guarantee-v23" />
+    <link rel="stylesheet" href="./styles.css?v=20260710-manager-reset-v24" />
   </head>
   <body>
     <section id="loginScreen" class="login-screen" hidden>
@@ -163,6 +163,27 @@
           </article>
         </div>
 
+        <article class="manager-card manager-test-tools">
+          <div class="team-topline">
+            <div>
+              <span class="summon-kicker">測試工具</span>
+              <strong>重置同仁遊戲進度</strong>
+            </div>
+            <span class="soft-pill">保留報表資料</span>
+          </div>
+          <p class="small-text">清空卡片庫、寵物、星魂、素材、抽卡紀錄與免費抽；Excel 匯入與來源累積保留，並重新計算可重抽額度。</p>
+          <div class="manager-reset-controls">
+            <label>
+              <span>指定員編</span>
+              <input id="managerResetUid" type="text" inputmode="numeric" list="managerResetPlayerOptions" placeholder="選擇或輸入員編" />
+              <datalist id="managerResetPlayerOptions"></datalist>
+            </label>
+            <button id="managerResetPlayerBtn" class="secondary-button" type="button">重置所選同仁</button>
+            <button id="managerResetAllBtn" class="danger-button" type="button">重置全店測試進度</button>
+          </div>
+          <p id="managerResetStatus" class="backup-status" aria-live="polite"></p>
+        </article>
+
         <label id="managerDropZone" class="manager-drop-zone">
           <input id="csvInput" class="visually-hidden" type="file" accept=".csv,text/csv,.txt,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" />
           <strong>拖移每日報表到這裡</strong>
@@ -233,6 +254,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=20260710-repeat-guarantee-v23"></script>
+    <script src="./app.js?v=20260710-manager-reset-v24"></script>
   </body>
 </html>

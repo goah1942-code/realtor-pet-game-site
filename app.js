@@ -2243,6 +2243,9 @@ function createInitialState() {
       cloudStatus: "local",
       cloudDashboard: null,
       cloudImportPreview: null,
+      testResetBusy: false,
+      testResetStatus: "",
+      testResetTone: "",
     },
     backendConfig: {
       dropRates: {},
@@ -2708,6 +2711,27 @@ function mockCloudEnvelope(action, payload = {}) {
           by_storyline: collectionCountsByStoryline().map((item) => ({ storyline_id: item.storyline.storyline_id, name: item.storyline.name, owned: item.owned, total: item.total })),
         },
         warnings: [],
+      },
+      warnings: [],
+      errors: [],
+    };
+  }
+  if (action === "managerTestReset") {
+    const dashboardPlayers = mockCloudEnvelope("managerDashboard").data.players;
+    const scope = payload.scope === "all_active" ? "all_active" : "player";
+    const players = scope === "all_active"
+      ? dashboardPlayers
+      : dashboardPlayers.filter((player) => String(player.uid) === String(payload.uid || ""));
+    return {
+      ok: true,
+      action,
+      server_time: new Date().toISOString(),
+      data: {
+        scope,
+        period,
+        reset_count: players.length,
+        players: players.map((player, index) => ({ uid: player.uid, agent_name: player.agent_name, reset_id: `mock_reset_${index + 1}` })),
+        retained: { source_metrics: true, imports: true, report_points_recomputed: true },
       },
       warnings: [],
       errors: [],
@@ -5430,10 +5454,12 @@ function renderShellMode() {
   document.body?.classList?.toggle("is-employee-login-required", isLoginRequired);
   const maintenanceMenu = document.getElementById("maintenanceMenu");
   if (maintenanceMenu) maintenanceMenu.hidden = !MANAGER_MODE;
-  ["backupBtn", "restoreBtn", "resetBtn"].forEach((id) => {
+  ["backupBtn", "restoreBtn"].forEach((id) => {
     const element = document.getElementById(id);
     if (element) element.hidden = !MANAGER_MODE;
   });
+  const legacyResetButton = document.getElementById("resetBtn");
+  if (legacyResetButton) legacyResetButton.hidden = true;
 }
 
 function renderReportPeriodInput() {
@@ -6964,6 +6990,110 @@ function renderManagerLeaderboard() {
   `;
 }
 
+function managerResetRows() {
+  const rows = Array.isArray(state.manager.cloudDashboard?.players) ? state.manager.cloudDashboard.players : [];
+  const seen = new Set();
+  return rows.reduce((items, player) => {
+    const uid = cleanEmployeeId(player.uid || player.employee_id || "");
+    if (!uid || seen.has(uid)) return items;
+    seen.add(uid);
+    items.push({ uid, name: cleanProfileText(player.agent_name || player.agent || uid, uid, 24) });
+    return items;
+  }, []);
+}
+
+function renderManagerResetTools() {
+  const input = document.getElementById("managerResetUid");
+  const options = document.getElementById("managerResetPlayerOptions");
+  const singleButton = document.getElementById("managerResetPlayerBtn");
+  const allButton = document.getElementById("managerResetAllBtn");
+  const status = document.getElementById("managerResetStatus");
+  if (!input || !options || !singleButton || !allButton || !status) return;
+
+  const rows = managerResetRows();
+  options.innerHTML = rows.map((row) => `<option value="${escapeHtml(row.uid)}">${escapeHtml(row.name)}</option>`).join("");
+  if (!input.value && rows[0]) input.value = rows[0].uid;
+  const busy = Boolean(state.manager.testResetBusy);
+  input.disabled = busy;
+  singleButton.disabled = busy;
+  allButton.disabled = busy || rows.length === 0;
+  singleButton.textContent = busy ? "重置中..." : "重置所選同仁";
+  allButton.textContent = busy ? "重置中..." : `重置全店測試進度${rows.length ? `（${rows.length}位）` : ""}`;
+  status.textContent = state.manager.testResetStatus || "";
+  status.classList.toggle("is-good", state.manager.testResetTone === "good");
+  status.classList.toggle("is-bad", state.manager.testResetTone === "bad");
+}
+
+async function managerResetTestData(scope = "player") {
+  if (!MANAGER_MODE) return false;
+  if (!CLOUD_API_BASE_URL) {
+    state.manager.testResetStatus = "測試重置需要正式雲端 API。";
+    state.manager.testResetTone = "bad";
+    renderManagerResetTools();
+    return false;
+  }
+  if (cloudManagerKeyRequired()) {
+    state.manager.testResetStatus = "管理網址缺少 manager_key，請重新開啟店長專用入口。";
+    state.manager.testResetTone = "bad";
+    renderManagerResetTools();
+    return false;
+  }
+
+  const rows = managerResetRows();
+  const uid = cleanEmployeeId(document.getElementById("managerResetUid")?.value || "");
+  const selected = rows.find((row) => row.uid === uid);
+  if (scope === "player" && !uid) {
+    state.manager.testResetStatus = "請先選擇或輸入員編。";
+    state.manager.testResetTone = "bad";
+    renderManagerResetTools();
+    return false;
+  }
+  if (scope === "all_active" && rows.length === 0) {
+    state.manager.testResetStatus = "目前沒有可重置的 active 同仁。";
+    state.manager.testResetTone = "bad";
+    renderManagerResetTools();
+    return false;
+  }
+
+  const targetText = scope === "all_active"
+    ? `全店 ${rows.length} 位同仁`
+    : `${selected?.name || "員編"} ${uid}`;
+  const confirmed = typeof window !== "object" || typeof window.confirm !== "function" || window.confirm(
+    `確定重置${targetText}的測試遊戲進度？卡片、寵物、星魂、素材、抽卡紀錄與免費抽會清空；Excel 與匯入資料保留。`,
+  );
+  if (!confirmed) return false;
+
+  state.manager.testResetBusy = true;
+  state.manager.testResetStatus = `正在重置${targetText}...`;
+  state.manager.testResetTone = "";
+  saveState();
+  renderManagerResetTools();
+  try {
+    const envelope = await postCloudEnvelope("managerTestReset", {
+      manager_key: getCloudManagerKey(),
+      scope,
+      uid: scope === "player" ? uid : "",
+      period: state.manager.cloudDashboard?.period || currentPeriodKey(),
+      confirm_text: "RESET_TEST_GAME_STATE",
+      client_request_id: randomClientId("manager-reset"),
+    });
+    const data = cloudEnvelopeData(envelope, "managerTestReset");
+    if (!data) throw new Error(envelope?.errors?.[0]?.message || "managerTestReset response missing data");
+    await loadCloudState();
+    state.manager.testResetStatus = `重置完成：${data.reset_count || 0} 位。報表與匯入資料已保留。`;
+    state.manager.testResetTone = "good";
+    return true;
+  } catch (error) {
+    state.manager.testResetStatus = `重置失敗：${error.message || "unknown"}`;
+    state.manager.testResetTone = "bad";
+    return false;
+  } finally {
+    state.manager.testResetBusy = false;
+    saveState();
+    render();
+  }
+}
+
 function renderManagerDashboard() {
   if (!MANAGER_MODE) return;
   const teamToggle = document.getElementById("teamMissionToggle");
@@ -6976,6 +7106,7 @@ function renderManagerDashboard() {
   renderManagerTemporaryTasks();
   renderManagerImportAudit();
   renderManagerLeaderboard();
+  renderManagerResetTools();
 
   const tracking = document.getElementById("managerTracking");
   if (tracking) {
@@ -7394,6 +7525,8 @@ document.addEventListener("click", (event) => {
   }
   if (target.id === "cloudPreviewBtn") previewCloudImport();
   if (target.id === "cloudCommitBtn") commitCloudImport();
+  if (target.id === "managerResetPlayerBtn") managerResetTestData("player");
+  if (target.id === "managerResetAllBtn") managerResetTestData("all_active");
   if (target.id === "backupBtn") downloadProgressBackup();
   if (target.id === "restoreBtn") document.getElementById("backupInput")?.click();
   if (target.id === "resetBtn") requestResetProgress();
