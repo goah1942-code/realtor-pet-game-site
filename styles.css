@@ -2826,6 +2826,49 @@ h3 {
   margin-top: 12px;
 }
 
+.manager-month-status {
+  margin-top: 14px;
+}
+
+.manager-month-card {
+  border-color: rgba(36, 127, 150, 0.28);
+  background: #f7fbfc;
+}
+
+.manager-month-card.is-preview {
+  border-color: rgba(184, 130, 23, 0.38);
+  background: #fffaf0;
+}
+
+.manager-month-metrics {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(84px, 1fr));
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.manager-month-metrics > div {
+  display: grid;
+  gap: 4px;
+  min-width: 84px;
+  padding: 8px;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.manager-month-metrics span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.manager-month-metrics strong {
+  color: var(--navy);
+  font-size: 19px;
+}
+
 .manager-test-data .manual-report {
   margin-top: 12px;
 }

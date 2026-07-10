@@ -6939,14 +6939,85 @@ function managerAuditRows() {
   return [];
 }
 
+function managerAuditTotals(rows = []) {
+  return (Array.isArray(rows) ? rows : []).reduce((totals, row) => {
+    ["area", "development", "negotiation", "showing", "sales", "eValid", "eTotal", "calls", "listing", "meeting", "contract"].forEach((key) => {
+      totals[key] += normalizeMetricValue(row[key]);
+    });
+    return totals;
+  }, {
+    area: 0,
+    development: 0,
+    negotiation: 0,
+    showing: 0,
+    sales: 0,
+    eValid: 0,
+    eTotal: 0,
+    calls: 0,
+    listing: 0,
+    meeting: 0,
+    contract: 0,
+  });
+}
+
+function formatManagerImportTime(value) {
+  if (!value) return "尚未入帳";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("zh-TW");
+}
+
+function renderManagerMonthStatus() {
+  const target = document.getElementById("managerMonthStatus");
+  if (!target) return;
+  const rows = managerAuditRows();
+  const isPreview = Boolean(state.manager.cloudImportPreview?.import_id);
+  const dashboard = state.manager.cloudDashboard || {};
+  const latestImport = dashboard.latest_import || {};
+  const period = rows[0]?.period || state.manager.cloudImportPreview?.period || dashboard.period || currentPeriodKey();
+  const totals = managerAuditTotals(rows);
+  const statusLabel = isPreview ? "預覽中，尚未入帳" : rows.length ? "本月已入帳" : "尚未匯入";
+  const statusDetail = isPreview
+    ? "請先核對下方逐人數據，再按確認入帳；此時同仁端尚未更新。"
+    : rows.length
+      ? `最近確認：${formatManagerImportTime(latestImport.confirmed_at || state.manager.lastImport?.at)}`
+      : "匯入 Excel 並確認入帳後，這裡會保留本月最新累積。";
+  const metrics = [
+    ["A 社區服務", totals.area],
+    ["B 開發", totals.development],
+    ["C 回報", totals.negotiation],
+    ["D 帶看", totals.showing],
+    ["E 全部行程", totals.eTotal],
+    ["F 電話", totals.calls],
+    ["委託", totals.listing],
+    ["見面談", totals.meeting],
+    ["簽約", totals.contract],
+  ];
+  target.innerHTML = `
+    <article class="manager-card manager-month-card ${isPreview ? "is-preview" : ""}">
+      <div class="team-topline">
+        <div>
+          <span class="summon-kicker">本月目前狀態</span>
+          <strong>${escapeHtml(String(period))} · ${statusLabel}</strong>
+        </div>
+        <span class="soft-pill">${formatMetricValue(rows.length)} 位同仁</span>
+      </div>
+      <p class="small-text">${escapeHtml(statusDetail)}</p>
+      <div class="manager-month-metrics">
+        ${metrics.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${formatMetricValue(value)}</strong></div>`).join("")}
+      </div>
+      <p class="small-text">E 全部行程為 A+B+C+D 的全部組數；第一版用它作為日均行程的基礎，E 有效先只保留在下方明細供核對。</p>
+    </article>
+  `;
+}
+
 function renderManagerImportAudit() {
   const target = document.getElementById("managerImportAudit");
   if (!target) return;
   const rows = managerAuditRows();
-  const modeLabel = state.manager.cloudImportPreview?.import_id ? "預覽資料" : rows.length ? "已入帳資料" : "尚無資料";
+  const modeLabel = state.manager.cloudImportPreview?.import_id ? "預覽資料（尚未入帳）" : rows.length ? "已入帳資料" : "尚無資料";
   target.innerHTML = `
     <article class="manager-card">
-      <span class="summon-kicker">匯入數據比對表</span>
+      <span class="summon-kicker">本月同仁明細</span>
       <strong>${modeLabel} · ${rows.length} 位</strong>
       <div class="audit-table-wrap">
         <div class="audit-table" role="table" aria-label="匯入數據比對表">
@@ -6986,7 +7057,7 @@ function renderManagerImportAudit() {
           `}
         </div>
       </div>
-      <p class="small-text">這張表只給店長核對匯入資料；A-F 依目前報表欄位解析，確認無誤後再按「確認入帳」。</p>
+      <p class="small-text">這張表是本月目前累積的逐人明細；A-F 依目前報表欄位解析。預覽時請確認無誤後再按「確認入帳」。</p>
     </article>
   `;
 }
@@ -7208,6 +7279,7 @@ function renderManagerDashboard() {
   if (temporaryTaskToggle) temporaryTaskToggle.textContent = state.manager.temporaryTaskStarted ? "已開啟" : "未開啟";
 
   renderManagerTemporaryTasks();
+  renderManagerMonthStatus();
   renderManagerImportAudit();
   renderManagerLeaderboard();
   renderManagerResetTools();
