@@ -2466,6 +2466,41 @@ h3 {
   background: #f2f9fb;
 }
 
+.bag-card.soul-exchange {
+  grid-column: 1 / -1;
+}
+
+.soul-exchange-list,
+.soul-exchange-row,
+.soul-exchange-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.soul-exchange-row {
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.soul-exchange-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.soul-exchange-row small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+@media (min-width: 560px) {
+  .soul-exchange-row {
+    grid-template-columns: minmax(0, 1fr) minmax(190px, auto);
+    align-items: center;
+  }
+}
+
 .pool-card.is-ready {
   box-shadow: 0 12px 28px rgba(212, 95, 69, 0.15);
 }
