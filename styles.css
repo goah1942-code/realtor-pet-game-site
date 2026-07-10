@@ -2717,6 +2717,15 @@ h3 {
   padding: 18px;
 }
 
+.manager-version {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  vertical-align: middle;
+}
+
 .manager-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-top: 12px;

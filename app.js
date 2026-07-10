@@ -1,4 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
+const APP_VERSION = "v30";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -1346,10 +1347,17 @@ function showPetTalk() {
   }, 3000);
 }
 
-function switchToView(view) {
+function switchToView(view, options = {}) {
   document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("is-active", button.dataset.view === view));
-  document.querySelectorAll(".view-panel").forEach((panel) => panel.classList.toggle("is-active", panel.id === `view-${view}`));
+  const panelId = `view-${view}`;
+  const panel = document.getElementById(panelId);
+  if (!panel) return false;
+  document.querySelectorAll(".view-panel").forEach((item) => item.classList.toggle("is-active", item.id === panelId));
   if (view === "collection") renderCollection();
+  if (options.scroll !== false && typeof panel.scrollIntoView === "function") {
+    panel.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+  return true;
 }
 
 function progressRingMarkup(progress, options = {}) {
@@ -4639,7 +4647,7 @@ function animateCountUps(container) {
 function handlePoolUnlockClick(poolKey) {
   const mission = buildPilotMission(state.metrics);
   showActionToast(`${mission.title}，${mission.rewardText}。`);
-  switchToView("today");
+  switchToView("today", { scroll: false });
   window.setTimeout(() => {
     const card = document.querySelector("[data-pilot-mission-card='1']");
     if (!card) return;
@@ -4652,7 +4660,7 @@ function handlePoolUnlockClick(poolKey) {
 function handlePilotMissionClick() {
   const mission = buildPilotMission(state.metrics);
   showActionToast(`${mission.title}，${mission.detail}`);
-  switchToView("today");
+  switchToView("today", { scroll: false });
   window.setTimeout(() => {
     const card = document.querySelector("[data-pilot-mission-card='1']") || document.querySelector(mission.focusSelector);
     if (!card) return;
@@ -5528,6 +5536,11 @@ function renderShellMode() {
   });
   const legacyResetButton = document.getElementById("resetBtn");
   if (legacyResetButton) legacyResetButton.hidden = true;
+  const managerVersion = document.getElementById("managerVersionLabel");
+  if (managerVersion) {
+    managerVersion.hidden = !MANAGER_MODE;
+    managerVersion.textContent = `版本 ${APP_VERSION}`;
+  }
 }
 
 function renderReportPeriodInput() {
