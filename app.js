@@ -17,8 +17,11 @@ const ACTIVE_STORYLINE_IDS = new Set([
 const CONTRACT_TEMPLE_STORYLINE_IDS = new Set(["contract", "sl_contract_team_sanctum"]);
 const PROFILE = readEntryProfile();
 const STORAGE_KEY = `${LEGACY_STORAGE_KEY}:${PROFILE.userKey}`;
+const HOME_OPENING_STORAGE_KEY = `${STORAGE_KEY}:home-opening-v16`;
 const CLOUD_API_BASE_URL = readCloudApiBaseUrl();
 captureCloudManagerKeyFromUrl();
+let homeOpeningStateCache = null;
+let petTalkTimer = 0;
 
 let PETS = [
   {
@@ -217,6 +220,15 @@ const MATERIAL_DISPLAY_ORDER = [
   "call_core",
 ];
 
+const STORYLINE_ESSENCE_LABELS = {
+  development: "開拓精華",
+  call: "電之精華",
+  showing: "銷售精華",
+  listing: "信任精華",
+  contract: "契約精華",
+};
+const HATCH_ESSENCE_COST = 9;
+
 const POOLS = [
   {
     key: "general",
@@ -231,8 +243,8 @@ const POOLS = [
     key: "boosted",
     name: "高價值行動池",
     ticketName: "強化行程券",
-    source: "B+C+D 有效組數推進",
-    unlockText: "B+C+D 有效 > 4 後應有更明顯的解鎖感",
+    source: "拜訪、回報、銷售有效組數推進",
+    unlockText: "拜訪、回報、銷售有效組數越高，強化池越快亮",
     allowedStorylines: ["sl_development_expedition", "sl_showing_route", "sl_listing_seed_garden", "development", "showing", "listing"],
     rarityBands: ["N", "R", "SR"],
   },
@@ -250,7 +262,7 @@ const POOLS = [
     name: "成交神殿池",
     ticketName: "簽約祝福券",
     source: "委託、見面談、簽約核心進度",
-    unlockText: "只從成交神殿成果來源開啟，倍率待後端設定",
+    unlockText: "高價值成果累積後開啟成交神殿回饋",
     allowedStorylines: ["sl_contract_team_sanctum", "contract"],
     rarityBands: ["SR", "SSR"],
   },
@@ -262,6 +274,38 @@ const GACHA_CONFIG_INTERFACE = {
   assistRules: "由後端提供主寵助力倍率或稀有感應規則；未提供時只顯示已開啟狀態。",
   poolUnlocks: "由後端提供各池解鎖門檻；前端第一版只呈現進度與 placeholder。",
 };
+const INTERNAL_DRAW_PACING_CONFIG = {
+  monthlyGoal: "每天有小進度、每週有一次明顯爽點、月底看得到主寵養成成果。",
+  defaultOutcomeWeights: { pet: 8, egg: 22, essence: 70 },
+  pools: {
+    general: {
+      outcomeWeights: { pet: 8, egg: 22, essence: 70 },
+      publicCue: "日常小進度池：行程多，蛋與精華就會穩定累積。",
+    },
+    boosted: {
+      outcomeWeights: { pet: 10, egg: 25, essence: 65 },
+      publicCue: "高價值行動池：更適合推進主寵孵化與升星。",
+    },
+    result: {
+      outcomeWeights: { pet: 16, egg: 28, essence: 56 },
+      publicCue: "成果種子池：委託與見面談要比一般行程更有爽感。",
+    },
+    blessing: {
+      outcomeWeights: { pet: 34, egg: 21, essence: 45 },
+      publicCue: "成交神殿池：0.1 件也會累積回饋，高價值成果優先給寵物級回饋。",
+    },
+  },
+  essenceAmountWeights: [
+    { amount: 1, weight: 55 },
+    { amount: 2, weight: 35 },
+    { amount: 3, weight: 6 },
+    { amount: 4, weight: 3 },
+    { amount: 5, weight: 1 },
+  ],
+};
+const INTERNAL_PET_PITY_RULES = {
+  blessing: { maxMisses: 5 },
+};
 
 const PET_WISH_RULES = [
   {
@@ -270,7 +314,7 @@ const PET_WISH_RULES = [
     title: "社區星願",
     target: 1,
     current: (metrics) => Number(metrics.area || 0),
-    unit: "次 A 商圈",
+    unit: "次社區服務",
     message: "今天先點亮一個社區線索。",
     doneMessage: "社區線索已點亮，主寵多一點期待。",
     bonus: { exp: 30, general: 1 },
@@ -281,7 +325,7 @@ const PET_WISH_RULES = [
     title: "開發遠征",
     target: 2,
     current: (metrics) => Number(metrics.development || 0),
-    unit: "次 B 開發",
+    unit: "次拜訪",
     message: "今天補兩段開發路線。",
     doneMessage: "開發路線已展開，主寵準備遠征。",
     bonus: { exp: 30, general: 1 },
@@ -378,10 +422,10 @@ const STREAK_MILESTONE_REWARDS = [
 ];
 
 const GAME_SOURCE_METRICS = [
-  ["area", "A 商圈"],
-  ["development", "B 開發"],
-  ["negotiation", "C 議價"],
-  ["showing", "D 帶看"],
+  ["area", "社區服務"],
+  ["development", "拜訪"],
+  ["negotiation", "回報"],
+  ["showing", "帶看"],
   ["calls", "電話量"],
   ["momentum", "前置信號"],
   ["listing", "委託"],
@@ -397,7 +441,7 @@ const REPORT_VALID_WEIGHT = 1;
 const REPORT_TOTAL_ONLY_WEIGHT = 0.4;
 const GAME_SOURCE_POLICY = {
   source: "每日行程/成果報表",
-  rule: "遊戲獎勵只採計每日行程/成果報表的 A/B/C/D、電話量、前置信號與成果欄位；試營運追蹤、心得、圖片、外部報表不進入經驗、券、素材或團隊貢獻計算。",
+  rule: "遊戲獎勵只採計每日行程/成果報表的社區服務、拜訪、回報、帶看、電話量、前置信號與成果欄位；試營運追蹤、心得、圖片、外部報表不進入經驗、券、素材或團隊貢獻計算。",
   excludedExamples: ["opened", "settled", "shared_daily", "drew_card", "shared_draw", "wants_to_continue", "best_hook", "blocker"],
 };
 
@@ -420,6 +464,1192 @@ const TEAM_GOALS = [
   { key: "development", name: "店內開發累積", current: 0, target: 60, reward: "強化行程券 +1" },
   { key: "listing", name: "店內成果累積", current: 0, target: 8, reward: "信任素材 +2" },
 ];
+
+const ENTRY_SCREEN_METRICS = [
+  ["area", "社區服務（組數）"],
+  ["development", "拜訪（組數）"],
+  ["negotiation", "回報（組數）"],
+  ["showing", "帶看（組數）"],
+  ["calls", "電話通數"],
+  ["development", "募集"],
+  ["momentum", "追蹤"],
+  ["listing", "委託 A / N"],
+  ["meeting", "見面談（斡旋）"],
+  ["offer", "斡旋"],
+  ["price", "附表"],
+  ["contract", "成件 / 業績"],
+];
+
+const ENTRY_SCREEN_SUMMARY_METRICS = [
+  { key: "activityTotal", label: "行程量", getValue: (metrics) => (metrics.area || 0) + (metrics.development || 0) + (metrics.negotiation || 0) + (metrics.showing || 0) + (metrics.momentum || 0) },
+  { key: "resultTotal", label: "成果數量", getValue: (metrics) => (metrics.listing || 0) + (metrics.offer || 0) + (metrics.price || 0) + (metrics.meeting || 0) + (metrics.contract || 0) },
+];
+
+const ENTRY_REDEEM_RULES = [
+  { title: "社區服務卡", effect: "抽到後補上社區服務的行程組數。", key: "area" },
+  { title: "拜訪卡", effect: "抽到後補上拜訪組數，推進日常行程。", key: "development" },
+  { title: "回報卡", effect: "抽到後補上回報組數，幫你補掉議價/附表來源。", key: "negotiation" },
+  { title: "帶看卡", effect: "抽到後補上帶看組數，帶動見面進場。", key: "showing" },
+  { title: "電話卡", effect: "抽到後補上電話通數，提升信號穩定度。", key: "calls" },
+  { title: "委託卡", effect: "抽到後補上委託量，對應成件進度與業績條件。", key: "listing" },
+  { title: "簽約卡", effect: "抽到後補上成件/業績，推進成交神殿。", key: "contract" },
+];
+
+const SPIRIT_FOOD_ACTIVITY_ITEMS = [
+  { key: "area", label: "社區服務", unit: "組", hintSubject: "社區服務", rewardText: "會補一口行程食糧。" },
+  { key: "development", label: "拜訪", unit: "組", hintSubject: "拜訪", rewardText: "就更接近多一張開發卡。" },
+  { key: "negotiation", label: "回報", unit: "組", hintSubject: "回報", rewardText: "會推進高價值行動池。" },
+  { key: "showing", label: "帶看", unit: "組", hintSubject: "帶看", rewardText: "會讓帶看小旅行更亮。" },
+];
+
+const SPIRIT_FOOD_RESULT_ITEMS = [
+  { key: "listing", label: "委託", unit: "間", hintSubject: "委託", rewardText: "可推進成果抽卡獎勵。" },
+  { key: "price", label: "附表", unit: "件", hintSubject: "附表", rewardText: "會先記錄成果食糧。" },
+  { key: "offer", label: "斡旋", unit: "件", hintSubject: "斡旋", rewardText: "會先記錄成果食糧。" },
+  { key: "contract", label: "成件", unit: "件", decimals: 1, hintSubject: "成件", rewardText: "可推進成交神殿祝福。" },
+  { key: "contract", label: "業績", unit: "筆", hintSubject: "業績", rewardText: "目前先跟成件來源一起累積。" },
+];
+
+const HOME_METRIC_ITEMS = [
+  { key: "development", label: "拜訪", unit: "組", tone: "activity" },
+  { key: "showing", label: "帶看", unit: "組", tone: "activity" },
+  { key: "negotiation", label: "回報", unit: "組", tone: "activity" },
+  { key: "listing", label: "委託", unit: "間", tone: "result" },
+  { key: "contract", label: "成件", unit: "件", tone: "result", decimals: 1 },
+  { key: "contract", label: "業績", unit: "筆", tone: "result" },
+];
+
+const HOME_TICKET_NUDGES = {
+  general: "拜訪再 +1 組，多一點抽卡機會",
+  boosted: "拜訪/面訪再 +1 組，開發卡更接近",
+  result: "委託或成件再 +1 件，成果卡更接近",
+  blessing: "成件再 +1 件，祝福卡更接近",
+};
+
+const HOME_HERO_ACTIVITY_ITEMS = [
+  { key: "area", label: "社區服務", unit: "組" },
+  { key: "development", label: "拜訪", unit: "組" },
+  { key: "negotiation", label: "回報", unit: "組" },
+  { key: "showing", label: "帶看", unit: "組" },
+  { key: "calls", label: "電話量", unit: "通" },
+];
+
+const HOME_HERO_RESULT_ITEMS = [
+  { key: "listing", label: "N.", unit: "件" },
+  { key: "meeting", label: "A.", unit: "件" },
+  { key: "price", label: "二附", unit: "件" },
+  { key: "offer", label: "斡旋", unit: "件" },
+  { key: "contract", label: "成件", unit: "件", decimals: 1 },
+  { key: "contract", label: "業績", unit: "筆" },
+];
+
+function buildEntryScreenKpis(metricsSource = {}) {
+  const metrics = normalizeGameMetrics(metricsSource);
+  const summaryCards = ENTRY_SCREEN_SUMMARY_METRICS.map((item) => `
+    <article class="entry-kpi-card">
+      <strong>${formatMetricValue(item.getValue(metrics))}</strong>
+      <span>${escapeHtml(item.label)}</span>
+    </article>
+  `).join("");
+  const baseCards = ENTRY_SCREEN_METRICS.map(([key, label]) => `
+    <article class="entry-kpi-card">
+      <strong>${formatMetricValue(metrics[key])}</strong>
+      <span>${escapeHtml(label)}</span>
+    </article>
+  `).join("");
+  return `
+    ${summaryCards}
+    ${baseCards}
+  `;
+}
+
+function buildRedeemRuleCards() {
+  return ENTRY_REDEEM_RULES.map((rule) => `
+    <article class="entry-rule-item">
+      <strong>${escapeHtml(rule.title)}</strong>
+      <p>${escapeHtml(rule.effect)}</p>
+    </article>
+  `).join("");
+}
+
+function periodDisplayName(periodKey = currentPeriodKey()) {
+  const match = String(periodKey || "").match(/^\d{4}-(0?[1-9]|1[0-2])/);
+  const month = match ? Number(match[1]) : 0;
+  const names = ["一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"];
+  return names[month - 1] || "本月";
+}
+
+function foodItemValue(item, metrics) {
+  if (typeof item.getValue === "function") return normalizeMetricValue(item.getValue(metrics));
+  return normalizeMetricValue(metrics[item.key] || 0);
+}
+
+function nextFoodMissing(value) {
+  const current = normalizeMetricValue(value);
+  return normalizeMetricValue(Math.floor(current) + 1 - current);
+}
+
+function foodHintText(item, value) {
+  const missing = nextFoodMissing(value);
+  return `${item.hintSubject || item.label}再 +${formatMetricValue(missing)}${item.unit}，${item.rewardText}`;
+}
+
+function spiritFoodTotal(metrics = {}) {
+  const source = normalizeGameMetrics(metrics);
+  return [
+    "area",
+    "development",
+    "negotiation",
+    "showing",
+    "listing",
+    "price",
+    "offer",
+    "contract",
+  ].reduce((sum, key) => sum + Number(source[key] || 0), 0);
+}
+
+function buildSpiritFoodSummaryCard(metricsSource = {}, periodKey = currentPeriodKey()) {
+  const metrics = normalizeGameMetrics(metricsSource);
+  const periodName = periodDisplayName(periodKey);
+  return `
+    <article class="spirit-food-summary-card">
+      <div class="spirit-food-title">
+        <div>
+          <span>您目前${escapeHtml(periodName)}的累積精靈食糧</span>
+          <strong>${formatMetricValue(spiritFoodTotal(metrics))}</strong>
+        </div>
+        <span class="soft-pill">行程養等級，成果推覺醒</span>
+      </div>
+      <p class="small-text">先看最接近的一步，再決定今天補行程、衝成果，或直接把抽卡機會用掉。</p>
+    </article>
+  `;
+}
+
+function buildSpiritFoodSectionCard(title, items, metrics, tone = "activity") {
+  return `
+    <article class="spirit-food-section spirit-food-section-${escapeHtml(tone)}">
+      <div class="team-topline">
+        <strong>${escapeHtml(title)}</strong>
+        <span class="soft-pill">${items.length} 項</span>
+      </div>
+      <div class="spirit-food-list">
+        ${items.map((item) => {
+          const value = foodItemValue(item, metrics);
+          return `
+            <article class="spirit-food-row">
+              <div class="spirit-food-row-head">
+                <strong>${escapeHtml(item.label)}</strong>
+                <span class="spirit-food-value">${formatMetricValueForItem(value, item)}${escapeHtml(item.unit)}</span>
+              </div>
+              <p class="spirit-food-reward">${escapeHtml(foodHintText(item, value))}</p>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function remainingDailyFreeDraws() {
+  const free = Number(state.drawPoints?.daily_free || 0);
+  return Math.max(0, Math.min(totalTickets(), free));
+}
+
+function buildHomePriorityCard() {
+  const cue = buildEntryExperienceCue();
+  const tickets = totalTickets();
+  const freeDraws = remainingDailyFreeDraws();
+  const statusText = tickets > 0
+    ? `可抽 ${tickets} 次${freeDraws > 0 ? ` · 免費抽剩 ${freeDraws} 次` : ""}`
+    : "先補累積，抽卡入口就會亮起";
+  return {
+    ...cue,
+    statusText,
+  };
+}
+
+function buildHomeActionStrip() {
+  const tickets = totalTickets();
+  const freeDraws = remainingDailyFreeDraws();
+  return `
+    <article class="home-action-strip">
+      <div>
+        <span class="summon-kicker">現在就去</span>
+        <strong>${tickets > 0 ? `目前可兌換 ${tickets} 次抽卡` : "抽卡額度暫時還沒亮起"}</strong>
+        <p>${freeDraws > 0 ? `今日免費抽剩 ${freeDraws} 次，當天沒用就消失。` : "先補行程或成果，新的抽卡機會就會累積進來。"}</p>
+      </div>
+      <div class="home-action-buttons">
+        <button class="primary-button" type="button" data-view="gacha">看抽卡額度</button>
+        <button class="secondary-button" type="button" data-view="collection">看卡片庫</button>
+        <button class="secondary-button" type="button" data-view="bag">看背包</button>
+      </div>
+      <p class="small-text">主寵助力已開啟；卡池只顯示本月節奏，不公開精確機率。</p>
+    </article>
+  `;
+}
+
+function homeBagSummaryText() {
+  const eggs = eggEntries().reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const essences = essenceEntries().reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const materials = Object.values(state.materials || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+  const total = eggs + essences + materials;
+  return total > 0 ? `${total} 件` : "整理";
+}
+
+function buildHomeFunctionDock() {
+  const tickets = totalTickets();
+  const pet = getActivePet();
+  const ownedCount = ownedCurrentPetCount();
+  const items = [
+    { view: "gacha", label: "抽卡", value: tickets > 0 ? `${tickets} 次` : "快解鎖", hot: tickets > 0 },
+    { view: "collection", label: "卡片庫", value: `${ownedCount}/${PETS.length}` },
+    { view: "bag", label: "背包", value: homeBagSummaryText() },
+    { view: "collection", label: "寵物", value: pet?.name || "夥伴" },
+  ];
+  return `
+    <nav class="home-function-dock" aria-label="功能頁">
+      <div class="home-function-copy">
+        <span>功能頁</span>
+        <strong>${tickets > 0 ? `抽卡 ${tickets} 次先用掉` : "先看哪裡快解鎖"}</strong>
+      </div>
+      <div class="home-function-grid">
+        ${items.map((item) => `
+          <button class="home-function-button ${item.hot ? "is-hot" : ""}" type="button" data-view="${escapeHtml(item.view)}">
+            <span>${escapeHtml(item.label)}</span>
+            <strong>${escapeHtml(item.value)}</strong>
+          </button>
+        `).join("")}
+      </div>
+    </nav>
+  `;
+}
+
+function buildHomeMetricsStrip(metricsSource = {}) {
+  const metrics = normalizeGameMetrics(metricsSource);
+  return `
+    <section class="home-panel home-metrics-strip" aria-label="目前行程與成果">
+      <div class="home-panel-head">
+        <strong>目前行程跟成果</strong>
+        <span>本月</span>
+      </div>
+      <div class="home-metric-grid">
+        ${HOME_METRIC_ITEMS.map((item) => {
+          const value = normalizeMetricValue(metrics[item.key] || 0);
+          const hasValue = value > 0;
+          const detail = homeMetricZeroCue(item);
+          return `
+            <article class="home-metric-tile is-${escapeHtml(item.tone)} ${hasValue ? "" : "is-waiting"}">
+              <span>${escapeHtml(item.label)}</span>
+              <strong>${hasValue ? `${formatMetricValueForItem(value, item)}${escapeHtml(item.unit)}` : "待推進"}</strong>
+              ${hasValue ? "" : `<small>${escapeHtml(detail)}</small>`}
+            </article>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function homeMetricZeroCue(item) {
+  if (item.label === "成件") return "距離祝福券還差 1 件";
+  if (item.label === "業績") return "成件入帳後一起累積";
+  if (item.key === "listing") return "補 1 件委託推成果券";
+  if (item.key === "showing") return "補 1 組帶看推強化池";
+  if (item.key === "negotiation") return "補 1 組回報推強化池";
+  return "補 1 組拜訪推一般券";
+}
+
+function homeHeroMetricValue(item, metrics) {
+  const value = normalizeMetricValue(metrics[item.key] || 0);
+  if (value <= 0) return "待";
+  return `${formatMetricValueForItem(value, item)}${item.unit || ""}`;
+}
+
+function buildHomeHeroMetricGroup(title, items, metrics) {
+  return `
+    <div class="home-status-group">
+      <strong>${escapeHtml(title)}</strong>
+      <div class="home-status-chips">
+        ${items.map((item) => `
+          <span class="home-status-chip">
+            <b>${escapeHtml(item.label)}</b>
+            <small>${escapeHtml(homeHeroMetricValue(item, metrics))}</small>
+          </span>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function buildHomeStatusBoard(metricsSource = {}) {
+  const metrics = normalizeGameMetrics(metricsSource);
+  return `
+    <section class="home-status-board" aria-label="行程與成果摘要">
+      ${buildHomeHeroMetricGroup("行程", HOME_HERO_ACTIVITY_ITEMS, metrics)}
+      ${buildHomeHeroMetricGroup("成果", HOME_HERO_RESULT_ITEMS, metrics)}
+    </section>
+  `;
+}
+
+function buildHomeTicketStrip() {
+  const entries = ["general", "boosted", "result", "blessing"];
+  const total = totalTickets();
+  return `
+    <section class="home-panel home-ticket-strip" aria-label="目前累積卡片">
+      <div class="home-panel-head">
+        <strong>已累積抽卡</strong>
+        <span>${total > 0 ? `${total} 次` : "快解鎖"}</span>
+      </div>
+      <div class="home-ticket-grid">
+        ${entries.map((key) => {
+          const value = Number(state.tickets?.[key] || 0);
+          const progress = nextTicketProgress(key, state.metrics);
+          return `
+            <article class="home-ticket-tile ${value > 0 ? "is-ready" : ""}">
+              <div>
+                <span>${escapeHtml(ticketLabel(key))}</span>
+                <strong>${value > 0 ? `${value}<small>抽</small>` : "快解鎖"}</strong>
+              </div>
+              ${value > 0
+                ? `<p>${escapeHtml(HOME_TICKET_NUDGES[key] || "再累積一點，就更接近抽卡")}</p>`
+                : `
+                  <div class="mini-progress">
+                    <span style="width:${progress.percent}%"></span>
+                  </div>
+                  <p>${escapeHtml(progress.unlockText)}</p>
+                `}
+            </article>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function closestHatchProgress() {
+  return PETS
+    .map((pet) => {
+      const eggs = eggCount(pet.pet_id);
+      const essence = essenceCount(pet.storyline_id);
+      if (!eggs || getOwned(pet.pet_id)) return null;
+      const gap = Math.max(0, HATCH_ESSENCE_COST - essence);
+      return { pet, eggs, essence, gap, ready: gap === 0 };
+    })
+    .filter(Boolean)
+    .sort((left, right) => Number(right.ready) - Number(left.ready) || left.gap - right.gap)[0] || null;
+}
+
+function closestStarProgress() {
+  return PETS
+    .map((pet) => {
+      const owned = getOwned(pet.pet_id);
+      if (!owned || owned.star >= 5) return null;
+      const cost = starCost(owned.star + 1);
+      const gap = Math.max(0, cost - rewardCount(owned.duplicate_fragments || 0));
+      return { pet, owned, cost, gap, ready: gap === 0 };
+    })
+    .filter(Boolean)
+    .sort((left, right) => Number(right.ready) - Number(left.ready) || left.gap - right.gap)[0] || null;
+}
+
+function buildHomeResourceStrip() {
+  const hatch = closestHatchProgress();
+  const star = closestStarProgress();
+  const templeBlessing = rewardCount(state.specialResources?.templeBlessing || 0);
+  const ownedCount = ownedCurrentPetCount();
+  const hatchText = hatch
+    ? hatch.ready
+      ? `${hatch.pet.name} 可孵化`
+      : `${hatch.pet.name} 還差 ${hatch.gap} 個${essenceLabelForStoryline(hatch.pet.storyline_id)}`
+    : "抽到蛋後這裡會顯示孵化缺口";
+  const starText = star
+    ? star.ready
+      ? `${star.pet.name} 可升 ${star.owned.star + 1} 星`
+      : `${star.pet.name} 還差 ${star.gap} 個星魂`
+    : "抽到重複寵物會累積星魂";
+  return `
+    <section class="home-panel home-resource-strip" aria-label="目前累積資源">
+      <div class="home-panel-head">
+        <strong>目前累積了什麼</strong>
+        <span>${ownedCount}/${PETS.length} 隻</span>
+      </div>
+      <div class="home-resource-grid">
+        <article>
+          <span>寵物</span>
+          <strong>${ownedCount}<small>隻</small></strong>
+        </article>
+        <article class="${hatch?.ready ? "is-ready" : ""}">
+          <span>最近孵化</span>
+          <strong>${escapeHtml(hatchText)}</strong>
+        </article>
+        <article class="${star?.ready ? "is-ready" : ""}">
+          <span>最近升星</span>
+          <strong>${escapeHtml(starText)}</strong>
+        </article>
+        ${templeBlessing ? `<article class="is-ready"><span>神殿祝福</span><strong>${templeBlessing}<small>個</small></strong></article>` : ""}
+      </div>
+    </section>
+  `;
+}
+
+function buildHomeTodayChangeStrip(deltaMetrics = {}) {
+  const metrics = normalizeGameMetrics(deltaMetrics);
+  const seen = new Set();
+  const changed = HOME_METRIC_ITEMS
+    .filter((item) => {
+      if (seen.has(item.key)) return false;
+      seen.add(item.key);
+      return normalizeMetricValue(metrics[item.key] || 0) > 0;
+    })
+    .slice(0, 3);
+  if (!changed.length) {
+    return `
+      <section class="home-today-change" aria-label="今日新增">
+        <strong>今天還沒推進</strong>
+        <span>補一個最短挑戰，抽卡入口就會更接近。</span>
+      </section>
+    `;
+  }
+  return `
+    <section class="home-today-change is-active" aria-label="今日新增">
+      <strong>今日有推進</strong>
+      <div>
+        ${changed.map((item) => `
+          <span>${escapeHtml(item.label)} +${formatMetricValueForItem(metrics[item.key], item)}${escapeHtml(item.unit)}</span>
+        `).join("")}
+      </div>
+      <p class="home-confirm-cue">剛剛的推進已入帳，抽卡、經驗或覺醒素材更近了。</p>
+    </section>
+  `;
+}
+
+function questWorkLabel(quest) {
+  if (!quest) return "去補拜訪";
+  if (quest.key === "activity") return "去補拜訪";
+  if (quest.key === "boosted") return "去補拜訪/銷售";
+  if (quest.key === "result") return "去補委託";
+  if (quest.key === "contract") return "去補成件";
+  return "看今日推進";
+}
+
+function questActionCue(quest) {
+  if (!quest) return { action: "補 1 組拜訪", benefit: "抽卡更近" };
+  if (quest.key === "boosted") return { action: "補 1 組銷售", benefit: "強化抽更近" };
+  if (quest.key === "result") return { action: "補 1 件委託", benefit: "推覺醒素材" };
+  if (quest.key === "contract") return { action: "補 1 件成件", benefit: "祝福抽更近" };
+  return { action: "補 1 組拜訪", benefit: "抽卡更近" };
+}
+
+function questActionLabel(quest) {
+  const cue = questActionCue(quest);
+  return `${cue.action}，${cue.benefit}`;
+}
+
+function homePetStarCue(pet, owned) {
+  if (!pet || !owned) return "先保留主寵，累積星魂後可升星";
+  const currentStar = Math.max(1, Number(owned.star || 1));
+  if (currentStar >= 5) return "已達 5 星，後續重複可轉精華";
+  const nextStar = currentStar + 1;
+  const cost = starCost(nextStar);
+  const current = rewardCount(owned.duplicate_fragments || 0);
+  const gap = Math.max(0, cost - current);
+  return gap <= 0
+    ? `星魂已滿，可升 ${nextStar} 星`
+    : `還差 ${formatMetricValue(gap)} 個星魂可升 ${nextStar} 星`;
+}
+
+function homePetDrawCue(metricsSource = state.metrics) {
+  const quests = buildDailyQuests(metricsSource);
+  const resultQuest = quests.find((quest) => quest.key === "result");
+  const contractQuest = quests.find((quest) => quest.key === "contract");
+  const boostedQuest = quests.find((quest) => quest.key === "boosted");
+  if (resultQuest && !resultQuest.done) return "再 1 件委託/見面談/簽約，成果抽更近";
+  if (contractQuest && !contractQuest.done) return "再 1 件成件，祝福抽更近";
+  if (resultQuest?.done || contractQuest?.done) return "下一筆成果會繼續推進成果抽";
+  if (boostedQuest && !boostedQuest.done) return "再補銷售或回報，強化抽更近";
+  return "再補 1 組拜訪，抽卡入口更近";
+}
+
+function ticketDeltaParts(delta = {}) {
+  const labels = {
+    general: "一般券",
+    boosted: "強化券",
+    result: "成果券",
+    blessing: "祝福券",
+  };
+  return Object.entries(labels)
+    .filter(([key]) => Number(delta[key] || 0) > 0)
+    .map(([key, label]) => `${label} +${rewardCount(delta[key])}`);
+}
+
+function rewardDeltaForMetrics(baseRewards, nextRewards) {
+  return {
+    exp: Math.max(0, Number(nextRewards.exp || 0) - Number(baseRewards.exp || 0)),
+    general: Math.max(0, Number(nextRewards.general || 0) - Number(baseRewards.general || 0)),
+    boosted: Math.max(0, Number(nextRewards.boosted || 0) - Number(baseRewards.boosted || 0)),
+    result: Math.max(0, Number(nextRewards.result || 0) - Number(baseRewards.result || 0)),
+    blessing: Math.max(0, Number(nextRewards.blessing || 0) - Number(baseRewards.blessing || 0)),
+  };
+}
+
+function nextRewardGapForMetric(metricsSource, metricKey, maxGap = 8) {
+  const metrics = normalizeGameMetrics(metricsSource);
+  const baseRewards = calculateRewards(metrics, getActivePet(), false);
+  const baseTicketTotal = rewardTicketTotal(baseRewards);
+  for (let gap = 1; gap <= maxGap; gap += 1) {
+    const nextMetrics = { ...metrics, [metricKey]: normalizeMetricValue(metrics[metricKey] || 0) + gap };
+    const nextRewards = calculateRewards(nextMetrics, getActivePet(), false);
+    const delta = rewardDeltaForMetrics(baseRewards, nextRewards);
+    if (rewardTicketTotal(nextRewards) > baseTicketTotal) {
+      return {
+        gap,
+        delta,
+        nextRewards,
+        ticketDelta: rewardTicketTotal(nextRewards) - baseTicketTotal,
+      };
+    }
+  }
+  const oneMoreMetrics = { ...metrics, [metricKey]: normalizeMetricValue(metrics[metricKey] || 0) + 1 };
+  const oneMoreRewards = calculateRewards(oneMoreMetrics, getActivePet(), false);
+  return {
+    gap: 1,
+    delta: rewardDeltaForMetrics(baseRewards, oneMoreRewards),
+    nextRewards: oneMoreRewards,
+    ticketDelta: 0,
+  };
+}
+
+function petMatchesWork(pet, metricKey) {
+  if (!pet) return false;
+  const tags = Array.isArray(pet.work_behavior_tags) ? pet.work_behavior_tags.map((tag) => String(tag).toUpperCase()) : [];
+  const storyline = String(pet.storyline_id || "").toLowerCase();
+  if (metricKey === "showing") return storyline.includes("showing") || tags.includes("SHOWING") || tags.includes("CLIENT_MEETING");
+  if (metricKey === "development") return storyline.includes("development") || tags.includes("DEVELOPMENT") || tags.includes("CALL_COUNT");
+  return false;
+}
+
+function targetPetForPilotMission(metricKey) {
+  const active = getActivePet();
+  if (petMatchesWork(active, metricKey)) return active;
+  const ownedPet = PETS.find((pet) => getOwned(pet.pet_id) && petMatchesWork(pet, metricKey));
+  if (ownedPet) return ownedPet;
+  return PETS.find((pet) => petMatchesWork(pet, metricKey)) || active;
+}
+
+function pilotMissionRoute(metricKey, pet) {
+  if (metricKey === "showing") return petMatchesWork(pet, "showing") ? "帶看小旅行" : "帶看小旅行";
+  if (metricKey === "development") return "開發遠征隊";
+  return "今日推進";
+}
+
+function pilotMissionRewardText(option) {
+  const ticketParts = ticketDeltaParts(option.rewardDelta);
+  if (ticketParts.length) return ticketParts.join("、");
+  if (Number(option.rewardDelta.exp || 0) > 0) return `經驗 +${rewardCount(option.rewardDelta.exp)}`;
+  return option.metricKey === "showing" ? "強化抽進度前進" : "一般抽進度前進";
+}
+
+function pilotMissionOption(metricsSource, metricKey) {
+  const rewardGap = nextRewardGapForMetric(metricsSource, metricKey);
+  const pet = targetPetForPilotMission(metricKey);
+  const label = metricKey === "showing" ? "帶看" : "拜訪";
+  const route = pilotMissionRoute(metricKey, pet);
+  const rewardText = pilotMissionRewardText({ metricKey, rewardDelta: rewardGap.delta });
+  const routeVerb = metricKey === "showing" ? "留下導覽軌跡" : "點亮開發路線";
+  return {
+    key: metricKey,
+    label,
+    unit: "組",
+    gap: Math.max(1, rewardGap.gap),
+    pet,
+    petName: pet?.name || "主寵",
+    route,
+    routeVerb,
+    rewardText,
+    rewardDelta: rewardGap.delta,
+    ticketDelta: rewardGap.ticketDelta,
+    questKey: metricKey === "showing" ? "boosted" : "activity",
+  };
+}
+
+function buildPilotMission(metricsSource = state.metrics) {
+  const metrics = normalizeGameMetrics(metricsSource);
+  const showing = pilotMissionOption(metrics, "showing");
+  const development = pilotMissionOption(metrics, "development");
+  const selected = development.gap + 1 < showing.gap ? development : showing;
+  const isShowing = selected.key === "showing";
+  return {
+    ...selected,
+    eyebrow: isShowing ? "試營運主任務" : "次要替代任務",
+    title: `再補 ${formatMetricValue(selected.gap)} 組${selected.label}`,
+    detail: `${selected.route}／${selected.petName}會${selected.routeVerb}，預計推進：${selected.rewardText}。`,
+    buttonLabel: `去補${selected.label}`,
+    focusSelector: `[data-quest="${selected.questKey}"]`,
+  };
+}
+
+function buildPilotMissionCard(metricsSource = state.metrics, options = {}) {
+  const mission = buildPilotMission(metricsSource);
+  const compact = Boolean(options.compact);
+  return `
+    <article class="pilot-mission-card ${compact ? "is-compact" : ""}" data-pilot-mission-card="1">
+      <span>${escapeHtml(mission.eyebrow)}</span>
+      <strong>${escapeHtml(mission.title)}</strong>
+      <p>${escapeHtml(mission.detail)}</p>
+      <button class="primary-button" type="button" data-pilot-mission="${escapeHtml(mission.key)}">${escapeHtml(mission.buttonLabel)}</button>
+    </article>
+  `;
+}
+
+const POOL_QUEST_KEY = {
+  general: "activity",
+  boosted: "boosted",
+  result: "result",
+  blessing: "contract",
+};
+
+function questProgressState(quest) {
+  if (!quest) {
+    return {
+      key: "activity",
+      current: 0,
+      target: 1,
+      gap: 1,
+      percent: 0,
+      actionText: "補 1 組拜訪",
+      unlockText: "補 1 組拜訪就能推進抽卡",
+      label: "差 1 組拜訪",
+    };
+  }
+  const current = normalizeMetricValue(quest.current || 0);
+  const target = Math.max(1, normalizeMetricValue(quest.target || 1));
+  const gap = Math.max(0, normalizeMetricValue(target - current));
+  const percent = progressPercent(Math.min(current, target), target);
+  const action = questActionCue(quest).action;
+  const unlockText = gap > 0 ? `${action} → ${quest.reward}` : quest.message;
+  return {
+    key: quest.key,
+    current,
+    target,
+    gap,
+    percent,
+    actionText: action,
+    unlockText,
+    label: gap > 0 ? `差 ${formatMetricValue(gap)} ${action.replace(/^補\s*/, "").replace(/^1\s*/, "")}` : "可推進",
+  };
+}
+
+function nextQuestForPool(poolKey, metrics = state.metrics) {
+  const questKey = POOL_QUEST_KEY[poolKey] || "activity";
+  return buildDailyQuests(metrics).find((quest) => quest.key === questKey) || null;
+}
+
+function nextTicketProgress(poolKey = "general", metrics = state.metrics) {
+  const quest = nextQuestForPool(poolKey, metrics);
+  return questProgressState(quest);
+}
+
+function nextBestTicketProgress(metrics = state.metrics) {
+  const quests = buildDailyQuests(metrics)
+    .filter((quest) => !quest.done)
+    .map(questProgressState)
+    .sort((left, right) => left.gap - right.gap || right.percent - left.percent);
+  return quests[0] || questProgressState(buildDailyQuests(metrics)[0]);
+}
+
+function rewardTicketTotal(rewards = {}) {
+  return Number(rewards.general || 0) + Number(rewards.boosted || 0) + Number(rewards.result || 0) + Number(rewards.blessing || 0);
+}
+
+function buildDrawEfficiencyOptions(metricsSource = state.metrics) {
+  const metrics = normalizeGameMetrics(metricsSource);
+  const baseRewards = calculateRewards(metrics, getActivePet(), false);
+  const baseTicketTotal = rewardTicketTotal(baseRewards);
+  return [
+    { key: "development", label: "拜訪", action: "多 1 組拜訪", poolKey: "general" },
+    { key: "showing", label: "帶看", action: "多 1 組帶看", poolKey: "boosted" },
+  ].map((option) => {
+    const nextMetrics = { ...metrics, [option.key]: normalizeMetricValue(metrics[option.key] || 0) + 1 };
+    const nextRewards = calculateRewards(nextMetrics, getActivePet(), false);
+    const ticketDelta = Math.max(0, rewardTicketTotal(nextRewards) - baseTicketTotal);
+    const expDelta = Math.max(0, Number(nextRewards.exp || 0) - Number(baseRewards.exp || 0));
+    const progress = nextTicketProgress(option.poolKey, metrics);
+    const score = ticketDelta * 100 + expDelta + Number(progress.percent || 0) / 10;
+    const resultText = ticketDelta > 0
+      ? `補上報表後 +${ticketDelta} 抽`
+      : option.key === "showing"
+        ? `帶看推高價值池，經驗 +${expDelta}`
+        : `拜訪推一般券，經驗 +${expDelta}`;
+    return {
+      ...option,
+      ticketDelta,
+      expDelta,
+      progress,
+      score,
+      resultText,
+    };
+  }).sort((left, right) => right.score - left.score);
+}
+
+function buildDrawEfficiencyCard(metricsSource = state.metrics) {
+  const options = buildDrawEfficiencyOptions(metricsSource);
+  const best = options[0];
+  if (!best) return "";
+  const second = options[1];
+  const tie = second && best.ticketDelta === second.ticketDelta && best.expDelta === second.expDelta;
+  const headline = tie
+    ? "拜訪、帶看都能推抽卡"
+    : `${best.action}最有效`;
+  const detail = best.ticketDelta > 0
+    ? `${best.resultText}，經驗 +${best.expDelta}。`
+    : `${best.resultText}；${second?.label || "另一項"}也能補抽卡進度。`;
+  return `
+    <article class="home-efficiency-card">
+      <span>想多抽，先看效率</span>
+      <strong>${escapeHtml(headline)}</strong>
+      <p>${escapeHtml(detail)}</p>
+      <div class="home-efficiency-options">
+        ${options.map((option, index) => `
+          <b class="${index === 0 ? "is-best" : ""}">
+            ${escapeHtml(option.label)}
+            <small>${escapeHtml(option.ticketDelta > 0 ? `+${option.ticketDelta}抽` : `+${option.expDelta}經驗`)}</small>
+          </b>
+        `).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function monthEndDaysLeft(date = new Date()) {
+  const daysInMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  return Math.max(1, daysInMonth - date.getDate() + 1);
+}
+
+function readHomeOpeningState() {
+  if (homeOpeningStateCache) return homeOpeningStateCache;
+  const today = todayKey();
+  let stored = {};
+  try {
+    stored = JSON.parse(localStorage.getItem(HOME_OPENING_STORAGE_KEY) || "{}") || {};
+  } catch {
+    stored = {};
+  }
+  const lastDate = String(stored.lastOpenDate || "");
+  const previousDate = previousDateKey(today);
+  const streak = lastDate === today
+    ? Math.max(1, Number(stored.openStreak || 1))
+    : lastDate === previousDate
+      ? Math.max(1, Number(stored.openStreak || 0) + 1)
+      : 1;
+  const firstOpenToday = lastDate !== today;
+  if (firstOpenToday) {
+    try {
+      localStorage.setItem(HOME_OPENING_STORAGE_KEY, JSON.stringify({ lastOpenDate: today, openStreak: streak }));
+    } catch {
+      // localStorage is a visual-only enhancement; ignore privacy mode failures.
+    }
+  }
+  homeOpeningStateCache = {
+    firstOpenToday,
+    openStreak: streak,
+    tone: streak >= 14 ? "legend" : streak >= 7 ? "hot" : streak >= 3 ? "warm" : "soft",
+  };
+  return homeOpeningStateCache;
+}
+
+function yesterdaySettlementCue() {
+  const yesterday = previousDateKey(todayKey());
+  const settlement = state.dailySettlements?.[yesterday];
+  if (!settlement?.awarded) return "";
+  const metrics = normalizeGameMetrics(settlement.deltaMetrics || settlement.metrics || {});
+  const parts = [
+    ["拜訪", metrics.development],
+    ["帶看", metrics.showing],
+    ["回報", metrics.negotiation],
+    ["委託", metrics.listing],
+    ["成件", metrics.contract],
+  ]
+    .filter(([, value]) => normalizeMetricValue(value) > 0)
+    .map(([label, value]) => `${label} +${formatMetricValue(value)}`);
+  return parts.length ? `昨天成果已入帳：${parts.slice(0, 3).join("、")}` : "昨天的成果已入帳，今天可以接著推進。";
+}
+
+function homeOpeningGreetingMarkup() {
+  const opening = readHomeOpeningState();
+  if (!opening.firstOpenToday) return "";
+  const streakText = opening.openStreak >= 3 ? `連續開啟 ${opening.openStreak} 天，火種還在。` : "今天先補一件最短任務。";
+  const settlementCue = yesterdaySettlementCue();
+  return `
+    <div class="home-greeting-card is-${escapeHtml(opening.tone)}" aria-live="polite">
+      <strong>${escapeHtml(getActivePet()?.name || "你的夥伴")}回來了</strong>
+      <span>${escapeHtml(settlementCue || streakText)}</span>
+    </div>
+  `;
+}
+
+function petTalkLine() {
+  const pet = getActivePet();
+  const progress = nextBestTicketProgress(state.metrics);
+  const lines = [
+    "今天也一起把一個缺口補起來。",
+    "我在這裡，等你把行程變成抽卡。",
+    "先做最短的一步，獎勵就會亮。",
+    "成果不是報表，是我的進化素材。",
+    "把今天的拜訪補上，我就更接近升級。",
+    "你多跑一組，我就多亮一格。",
+    "今天先不用想太多，先推一個最接近的獎勵。",
+  ];
+  if (progress?.gap > 0) {
+    lines.push(`${progress.label}，抽卡入口就會亮。`);
+    lines.push(`${progress.unlockText}，我會記住這次推進。`);
+  }
+  return lines[Math.floor(Math.random() * lines.length)] || `${pet?.name || "夥伴"}準備好了。`;
+}
+
+function showPetTalk() {
+  const petButton = document.querySelector("[data-pet-talk='1']");
+  const bubble = document.getElementById("petTalkBubble");
+  if (!petButton || !bubble) return;
+  window.clearTimeout(petTalkTimer);
+  petButton.classList.remove("is-talking");
+  bubble.hidden = false;
+  bubble.textContent = petTalkLine();
+  requestAnimationFrame(() => petButton.classList.add("is-talking"));
+  petTalkTimer = window.setTimeout(() => {
+    bubble.hidden = true;
+    petButton.classList.remove("is-talking");
+  }, 3000);
+}
+
+function switchToView(view) {
+  document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("is-active", button.dataset.view === view));
+  document.querySelectorAll(".view-panel").forEach((panel) => panel.classList.toggle("is-active", panel.id === `view-${view}`));
+  if (view === "collection") renderCollection();
+}
+
+function progressRingMarkup(progress, options = {}) {
+  const percent = Math.max(0, Math.min(100, Number(progress?.percent || 0)));
+  const radius = 39;
+  const circumference = 2 * Math.PI * radius;
+  const dash = (percent / 100) * circumference;
+  const label = options.label || progress?.label || "快解鎖";
+  const sublabel = options.sublabel || `${Math.round(percent)}%`;
+  return `
+    <div class="progress-ring ${percent >= 100 ? "is-complete" : ""}" style="--ring-percent:${percent}">
+      <svg viewBox="0 0 96 96" role="img" aria-label="${escapeHtml(label)}">
+        <circle class="progress-ring-track" cx="48" cy="48" r="${radius}"></circle>
+        <circle class="progress-ring-fill" cx="48" cy="48" r="${radius}" stroke-dasharray="${dash} ${circumference - dash}"></circle>
+      </svg>
+      <span>${escapeHtml(label)}</span>
+      <small>${escapeHtml(sublabel)}</small>
+    </div>
+  `;
+}
+
+function actionableDailyQuest(metrics = state.metrics, options = {}) {
+  const allowZeroReward = Boolean(options.allowZeroReward);
+  return buildDailyQuests(metrics)
+    .filter((item) => !item.done)
+    .filter((item) => allowZeroReward || (!String(item.reward || "").includes("+0") && item.key !== "contract"))
+    .sort((a, b) => (a.target - a.current) - (b.target - b.current))[0] || null;
+}
+
+function buildHomeDecisionCard(deltaMetrics = {}, periodKey = currentPeriodKey()) {
+  const priority = buildHomePriorityCard();
+  const readyTickets = totalTickets();
+  const sprint = buildMonthSprintItems()[0];
+  const mission = buildPilotMission(deltaMetrics);
+  const shouldDrawFirst = readyTickets > 0;
+  const workLabel = shouldDrawFirst ? "去抽卡" : mission.buttonLabel;
+  const actionView = shouldDrawFirst ? "gacha" : "today";
+  const title = shouldDrawFirst ? `先把 ${readyTickets} 次抽卡用掉` : mission.title;
+  const reward = shouldDrawFirst
+    ? "新卡、蛋或精華立刻入袋"
+    : mission.rewardText
+    ? mission.rewardText
+    : sprint?.tag === "快完成"
+      ? "快完成"
+      : "一般券更接近";
+  const detail = shouldDrawFirst
+    ? `抽完再看下一步；${sprint ? sprint.title : "重複寵物會變成星魂"}。`
+    : mission
+    ? `${mission.detail} · ${sprint ? `本月主推：${sprint.title}` : "先讓本月有第一個推進感"}`
+    : sprint?.detail || "補完再回來抽卡，星魂會更接近。";
+  return `
+    <article class="home-decision-card summon-tone-${escapeHtml(priority.tone || "growth")}">
+      <span>${escapeHtml(periodDisplayName(periodKey))}今天先做這個</span>
+      <strong>${escapeHtml(title)}</strong>
+      <p>${escapeHtml(detail)}</p>
+      <button class="primary-button" type="button" ${shouldDrawFirst ? `data-view="${escapeHtml(actionView)}"` : `data-pilot-mission="${escapeHtml(mission.key)}"`}>${escapeHtml(shouldDrawFirst ? workLabel : mission.buttonLabel)}</button>
+    </article>
+  `;
+}
+
+function buildHomeChallengeCard(deltaMetrics = {}, priority = buildHomePriorityCard()) {
+  const quests = buildDailyQuests(deltaMetrics);
+  const nextQuest = quests
+    .filter((quest) => !quest.done)
+    .sort((a, b) => (a.target - a.current) - (b.target - b.current))[0];
+  const streak = nextStreakRewardPreview();
+  const title = nextQuest ? nextQuest.title : "連續推進";
+  const detail = nextQuest
+    ? nextQuest.message
+    : `再 ${streak.remaining} 天開 ${streak.title}`;
+  const reward = nextQuest ? nextQuest.reward : streak.rewardText;
+  return `
+    <article class="home-challenge-card summon-tone-${escapeHtml(priority.tone)}">
+      <span>今日最短挑戰</span>
+      <strong>${escapeHtml(detail)}</strong>
+      <p>${escapeHtml(title)} · ${escapeHtml(reward || "完成後會讓養成更接近下一階段")}</p>
+    </article>
+  `;
+}
+
+function monthSprintWorkCue(pet) {
+  const tags = Array.isArray(pet?.work_behavior_tags) ? pet.work_behavior_tags : [];
+  const storyline = String(pet?.storyline_id || "");
+  if (tags.includes("contract") || storyline.includes("contract")) return "今天再補成件或簽約成果，成交神殿會更接近。";
+  if (tags.includes("listing") || storyline.includes("listing")) return "今天再補 1 件委託，覺醒素材會更接近。";
+  if (tags.includes("showing") || storyline.includes("showing")) return "今天再補帶看或見面談，牠的路線會更快推進。";
+  if (tags.includes("call") || storyline.includes("call")) return "今天再補電話或回報，信號素材會更接近。";
+  return "今天再補拜訪或開發，星魂會更接近。";
+}
+
+function buildMonthSprintItems() {
+  const items = [];
+  PETS.forEach((pet) => {
+    const owned = getOwned(pet.pet_id);
+    if (!owned) return;
+    const nextCost = owned.star < 5 ? starCost(owned.star + 1) : 0;
+    const fragmentGap = owned.star < 5 ? Math.max(0, nextCost - owned.duplicate_fragments) : Infinity;
+    const workCue = monthSprintWorkCue(pet);
+    if (owned.star < 5 && fragmentGap <= 0) {
+      items.push({
+        score: 120,
+        tag: "快完成",
+        title: `${pet.name} 可升 ${owned.star + 1} 星`,
+        detail: `星魂已滿，先升星，${workCue}`,
+      });
+    } else if (owned.star < 5 && fragmentGap <= 12) {
+      items.push({
+        score: 90 - fragmentGap,
+        tag: fragmentGap <= 3 ? "快完成" : "今天可推",
+        title: `${pet.name} 差 ${fragmentGap} 片升 ${owned.star + 1} 星`,
+        detail: workCue,
+      });
+    }
+    if (canAwaken(pet, owned)) {
+      items.push({
+        score: 115,
+        tag: "快完成",
+        title: `${pet.name} 可覺醒`,
+        detail: "成果素材已到位，先把成果變成戰力。",
+      });
+      return;
+    }
+    if (!owned.awakened && pet.available_forms?.includes("覺醒型")) {
+      const missing = missingMaterials(pet.required_awaken_materials || {});
+      const missingTotal = missing.reduce((sum, item) => sum + item.missing, 0);
+      if (missingTotal > 0 && missingTotal <= 2) {
+        const first = missing[0];
+        items.push({
+          score: 84 - missingTotal,
+          tag: missingTotal === 1 ? "快完成" : "今天可推",
+          title: `${pet.name} 差 ${first.label} ${first.missing} 個覺醒`,
+          detail: workCue,
+        });
+      } else if (!missing.length && owned.star < 5) {
+        items.push({
+          score: 72,
+          tag: "今天可推",
+          title: `${pet.name} 素材已足，先補星魂`,
+          detail: `升到 5 星就能覺醒；${workCue}`,
+        });
+      }
+    }
+  });
+  if (totalTickets() > 0) {
+    items.push({
+      score: 70,
+      tag: "今天可推",
+      title: `手上還有 ${totalTickets()} 次抽卡`,
+      detail: "先抽掉，重複寵物也會變成星魂。",
+    });
+  }
+  return items
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 3);
+}
+
+function buildHomeMonthSprintCard() {
+  const items = buildMonthSprintItems();
+  const now = new Date();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const daysLeft = Math.max(1, daysInMonth - now.getDate() + 1);
+  const title = daysLeft <= 7 ? "月底前最值得衝" : "本月最值得衝";
+  if (!items.length) return "";
+  const [primary, ...secondary] = items;
+  return `
+    <article class="home-sprint-card">
+      <div class="home-panel-head">
+        <strong>${escapeHtml(title)}</strong>
+        <span>剩 ${daysLeft} 天</span>
+      </div>
+      <div class="home-sprint-primary">
+        <span>${escapeHtml(primary.tag || "主推")}</span>
+        <strong>${escapeHtml(primary.title)}</strong>
+        <p>${escapeHtml(primary.detail)}</p>
+      </div>
+      <div class="home-sprint-list">
+        ${secondary.map((item, index) => `
+          <div class="home-sprint-item">
+            <b>${escapeHtml(item.tag || String(index + 2))}</b>
+            <div>
+              <strong>${escapeHtml(item.title)}</strong>
+              <span>${escapeHtml(item.detail)}</span>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function buildHomeOpeningStepCard(deltaMetrics = {}) {
+  const progress = state.progress || buildProgressSnapshot(state.metrics);
+  const period = progress.period || currentPeriodKey();
+  const food = spiritFoodTotal(progress.sourceMetrics || state.metrics || {});
+  const isEarlyMonth = new Date().getDate() <= 7 || food <= 3;
+  if (!isEarlyMonth) return "";
+  const quest = buildDailyQuests(deltaMetrics)
+    .filter((item) => !item.done && item.key !== "contract" && !String(item.reward || "").includes("+0"))
+    .sort((a, b) => (a.target - a.current) - (b.target - b.current))[0];
+  const text = quest?.message || "今天先補 1 組拜訪，讓本月進度亮起。";
+  const reward = quest?.reward || "一般券更接近";
+  return `
+    <article class="home-opening-step-card">
+      <span>${escapeHtml(periodDisplayName(period))}開局第一步</span>
+      <strong>${escapeHtml(text)}</strong>
+      <p>${escapeHtml(reward)} · 先讓新月份有第一個推進感。</p>
+    </article>
+  `;
+}
+
+function previousPeriodKey(periodKey = currentPeriodKey()) {
+  const match = String(periodKey || "").match(/^(\d{4})-(\d{2})$/);
+  if (!match) return "";
+  const date = new Date(Number(match[1]), Number(match[2]) - 2, 1);
+  return currentPeriodKey(date);
+}
+
+function persistentGrowthSummary() {
+  const pet = getActivePet();
+  const owned = pet ? getOwned(pet.pet_id) : null;
+  const materialCount = Object.values(state.materials || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+  if (!pet || !owned) return `寵物、星魂、蛋、精華會保留；目前素材 ${materialCount} 個。`;
+  return `${pet.name} Lv.${owned.level || 1}、${owned.star || 1} 星、星魂 ${owned.duplicate_fragments || 0}、蛋與精華都保留。`;
+}
+
+function buildHomeMonthResetCard(metricsSource = {}, periodKey = currentPeriodKey()) {
+  const metrics = normalizeGameMetrics(metricsSource);
+  const food = spiritFoodTotal(metrics);
+  const previousPeriod = previousPeriodKey(periodKey);
+  const ledger = normalizeSourceLedger(state.sourceLedger);
+  const hadPreviousPeriod = Boolean(previousPeriod && ledger.periods?.[previousPeriod]);
+  const isEarlyMonth = new Date().getDate() <= 7;
+  if (!hadPreviousPeriod && !isEarlyMonth && food > 3) return "";
+  const lead = food <= 3 ? `${periodDisplayName(periodKey)}剛開始累積` : `${periodDisplayName(periodKey)}持續累積中`;
+  return `
+    <section class="home-month-reset-card">
+      <strong>${escapeHtml(lead)}</strong>
+      <span>${escapeHtml(persistentGrowthSummary())}</span>
+    </section>
+  `;
+}
+
+function buildHomeHelpDrawer(metricsSource = {}) {
+  const metrics = normalizeGameMetrics(metricsSource);
+  return `
+    <details class="home-help-drawer">
+      <summary><span class="home-help-plus">＋</span><strong>玩法說明</strong><span>展開看細節</span></summary>
+      <div class="home-help-content">
+        ${buildSpiritFoodSectionCard("行程狀況", SPIRIT_FOOD_ACTIVITY_ITEMS, metrics, "activity")}
+        ${buildSpiritFoodSectionCard("成果狀況", SPIRIT_FOOD_RESULT_ITEMS, metrics, "result")}
+        ${buildHomeActionStrip()}
+      </div>
+    </details>
+  `;
+}
+
+function buildHomeHeroPanel(metricsSource = {}, periodKey = currentPeriodKey(), priority = buildHomePriorityCard()) {
+  const metrics = normalizeGameMetrics(metricsSource);
+  const pet = getActivePet();
+  const owned = getOwned(pet.pet_id);
+  const tickets = totalTickets();
+  const freeDraws = remainingDailyFreeDraws();
+  const opening = readHomeOpeningState();
+  const daysLeft = monthEndDaysLeft();
+  const drawLabel = tickets > 0 ? `去抽卡 ${tickets} 次` : "看怎麼解鎖抽卡";
+  const drawProgress = tickets > 0
+    ? { percent: 100, label: `可抽 ${tickets} 次`, unlockText: "先把抽卡機會用掉" }
+    : nextBestTicketProgress(state.metrics);
+  const nextLevelGoal = buildActivePetGrowthGoals(pet, owned).find((goal) => goal.title === "下一級");
+  const petGrowthCue = nextLevelGoal?.detail || "行程養等級，成果推覺醒";
+  const petLevel = Number(owned?.level || 1);
+  const petExp = Math.max(0, Number(owned?.exp || 0));
+  const petExpNeed = expNeeded(petLevel);
+  const petExpPercent = progressPercent(Math.min(petExp, petExpNeed), petExpNeed);
+  const petHeroClass = owned?.awakened || pet?.rarity === "SSR" || pet?.rarity === "UR" ? " is-rare" : "";
+  const petStarCue = homePetStarCue(pet, owned);
+  const petDrawCue = homePetDrawCue(metrics);
+  const nextQuest = actionableDailyQuest(state.metrics) || actionableDailyQuest(state.metrics, { allowZeroReward: true });
+  const zeroDrawCue = `${questActionLabel(nextQuest)}，抽卡入口就會亮。`;
+  const nextDrawCue = tickets > 0
+    ? priority.detail || priority.title || "再補一點行程或成果，抽卡入口就會亮起"
+    : zeroDrawCue;
+  const drawButtonAttr = tickets > 0 ? 'data-view="gacha"' : 'data-pilot-mission="home"';
+  const foodTotal = spiritFoodTotal(metrics);
+  const foodText = foodTotal > 0 ? formatMetricValue(foodTotal) : "待啟動";
+  return `
+    <section class="home-hero-panel">
+      <div class="home-hero-copy">
+        <span class="summon-kicker">房仲精靈</span>
+        <strong>歡迎 ${escapeHtml(PROFILE.agent)} 回來，養成專區</strong>
+        <div class="home-hero-pills">
+          <span class="home-streak-badge is-${escapeHtml(opening.tone)}">🔥${opening.openStreak}</span>
+          <span class="home-month-left ${daysLeft <= 5 ? "is-hot" : ""}">本月剩 ${daysLeft} 天</span>
+        </div>
+        <div class="home-food-count">
+          <span>${escapeHtml(periodDisplayName(periodKey))}精靈食糧</span>
+          <b>${escapeHtml(foodText)}</b>
+        </div>
+      </div>
+      ${buildHomeStatusBoard(metrics)}
+      <button class="home-pet-window${petHeroClass}" type="button" data-pet-talk="1" aria-label="和目前主寵互動">
+        ${petVisual(pet, owned, "large")}
+        <span>${escapeHtml(pet.name)} · Lv.${owned?.level || 1}</span>
+        <div class="home-pet-exp" aria-label="主寵經驗 ${petExp}/${petExpNeed}">
+          <i style="width:${petExpPercent}%"></i>
+        </div>
+        <small>${escapeHtml(petGrowthCue)}</small>
+        <div class="home-pet-cues">
+          <b>${escapeHtml(petStarCue)}</b>
+          <small>${escapeHtml(petDrawCue)}</small>
+        </div>
+        <em id="petTalkBubble" class="pet-talk-bubble" hidden></em>
+      </button>
+      <button class="text-button home-change-pet" type="button" data-view="collection">更換夥伴</button>
+      ${homeOpeningGreetingMarkup()}
+      <div class="home-draw-now">
+        <button class="secondary-button home-draw-button" type="button" ${drawButtonAttr}>${drawLabel}</button>
+      </div>
+      <div class="home-draw-cues">
+        ${buildPilotMissionCard(metrics, { compact: true })}
+        <p class="home-next-cue">${escapeHtml(tickets > 0 ? nextDrawCue : drawProgress.unlockText)}</p>
+      </div>
+    </section>
+  `;
+}
 
 const DAILY_ACHIEVEMENTS = [
   {
@@ -640,6 +1870,12 @@ function formatMetricValue(value) {
   return Number.isInteger(number) ? String(number) : number.toFixed(1).replace(/\.0$/, "");
 }
 
+function formatMetricValueForItem(value, item = {}) {
+  const number = normalizeMetricValue(value);
+  if (Number.isInteger(number) && Number(item.decimals || 0) > 0) return number.toFixed(Number(item.decimals));
+  return formatMetricValue(number);
+}
+
 function normalizeGameMetrics(metrics = {}) {
   return Object.fromEntries(GAME_SOURCE_METRIC_KEYS.map((key) => [key, normalizeMetricValue(metrics[key])]));
 }
@@ -668,10 +1904,45 @@ function sumGroups(groups, keys, field) {
   return keys.reduce((sum, key) => sum + normalizeMetricValue(groups?.[key]?.[field] || 0), 0);
 }
 
+function normalizeProgressBasis(rawMetrics = {}) {
+  const basis = rawMetrics.__basis || rawMetrics.event_basis || rawMetrics.eventBasis || rawMetrics.basis || {};
+  return isPlainObject(basis) ? basis : {};
+}
+
+function basisMetricNumber(basis, keys = []) {
+  const source = isPlainObject(basis) ? basis : {};
+  for (const key of keys) {
+    if (source[key] !== undefined && source[key] !== null && source[key] !== "") {
+      return normalizeMetricValue(source[key]);
+    }
+  }
+  return 0;
+}
+
+function buildFourPlusProgress({ basis = {}, mainEffective = 0, mainTotal = 0 } = {}) {
+  const target = basisMetricNumber(basis, ["e_daily_target", "daily_target", "four_plus_target"]) || 4;
+  const validDays = basisMetricNumber(basis, ["valid_days", "effective_days", "active_days", "report_days", "work_days"]);
+  const basisDailyAverage = basisMetricNumber(basis, ["e_daily_average", "e_daily_avg", "daily_e_average"]);
+  const basisTotal = basisMetricNumber(basis, ["e_daily_total", "e_daily_numerator", "e_valid", "e_total", "e_total_group", "e_all_total"]);
+  const current = basisDailyAverage || (validDays > 0 ? normalizeMetricValue((basisTotal || mainTotal || mainEffective) / validDays) : mainEffective);
+  return {
+    label: "日均 4+n 進度",
+    current,
+    target,
+    extra: Math.max(0, normalizeMetricValue(current - target)),
+    gap: Math.max(0, normalizeMetricValue(target - current)),
+    validDays,
+    sourceTotal: basisTotal || mainTotal || mainEffective,
+    dailyAverage: Boolean(basisDailyAverage || validDays > 0),
+    done: current >= target,
+  };
+}
+
 function buildProgressSnapshot(rawMetrics = state?.metrics || {}, sourceMetrics = normalizeGameMetrics(rawMetrics), deltaMetrics = normalizeGameMetrics(rawMetrics)) {
   const source = normalizeGameMetrics(sourceMetrics);
   const delta = normalizeGameMetrics(deltaMetrics);
   const groups = normalizeReportGroups(rawMetrics, source);
+  const basis = normalizeProgressBasis(rawMetrics);
   const mainKeys = ["area", "development", "negotiation", "showing"];
   const highValueKeys = ["development", "negotiation", "showing"];
   const mainEffective = sumGroups(groups, mainKeys, "effective");
@@ -685,15 +1956,17 @@ function buildProgressSnapshot(rawMetrics = state?.metrics || {}, sourceMetrics 
     sourceMetrics: source,
     deltaMetrics: delta,
     groups,
+    basis,
     main: {
-      label: "合計(E)=A+B+C+D",
+      label: "行程合計（社區服務＋拜訪＋回報＋帶看）",
       effective: mainEffective,
       total: mainTotal,
       dreamTarget: 6,
       dreamDone: mainTotal >= 6,
     },
+    fourPlus: buildFourPlusProgress({ basis, mainEffective, mainTotal }),
     highValue: {
-      label: "B+C+D 有效組數",
+      label: "高價值行為（拜訪＋回報＋帶看）",
       current: highValueEffective,
       target: 4,
       done: highValueEffective > 4,
@@ -701,10 +1974,10 @@ function buildProgressSnapshot(rawMetrics = state?.metrics || {}, sourceMetrics 
     phoneSignal: {
       label: "電話信號",
       calls: source.calls,
-      note: "電話越多越好，作為信號加成，不蓋過 B+C+D 有效。",
+      note: "電話越多越好，作為信號加成，不蓋過拜訪、回報、銷售有效組數。",
     },
     monthlyMission: {
-      label: "月任務：開發有效 + 帶看組數",
+      label: "月任務：雙量行為 開發＋帶看",
       current: monthlyMissionCurrent,
       target: 20,
       done: monthlyMissionCurrent >= 20,
@@ -724,9 +1997,11 @@ function buildProgressSnapshot(rawMetrics = state?.metrics || {}, sourceMetrics 
 
 function normalizeProgressSnapshot(progress, sourceMetrics = normalizeGameMetrics(SAMPLE_METRICS)) {
   if (!isPlainObject(progress)) return buildProgressSnapshot(sourceMetrics, sourceMetrics, sourceMetrics);
+  const basis = normalizeProgressBasis(progress);
   return {
-    ...buildProgressSnapshot(progress.sourceMetrics || sourceMetrics, progress.sourceMetrics || sourceMetrics, progress.deltaMetrics || sourceMetrics),
+    ...buildProgressSnapshot({ ...(progress.sourceMetrics || sourceMetrics), __basis: basis }, progress.sourceMetrics || sourceMetrics, progress.deltaMetrics || sourceMetrics),
     ...progress,
+    basis,
     groups: normalizeReportGroups({ __groups: progress.groups }, progress.sourceMetrics || sourceMetrics),
   };
 }
@@ -862,6 +2137,8 @@ function createInitialState() {
   return {
     activePetId: "dev-001",
     tickets: { general: 3, boosted: 1, result: 1, blessing: 0 },
+    drawPoints: { report_points: 2, daily_free: 3, bonus_draw: 0, boosted: 1, result: 1, blessing: 0 },
+    drawPity: {},
     materials: {
       listing_core: 1,
       offer_core: 1,
@@ -873,6 +2150,11 @@ function createInitialState() {
       call_core: 1,
       showing_core: 0,
       team_core: 0,
+    },
+    eggs: {},
+    essences: {},
+    specialResources: {
+      templeBlessing: 0,
     },
     metrics: normalizeGameMetrics(SAMPLE_METRICS),
     progress: buildProgressSnapshot(SAMPLE_METRICS, normalizeGameMetrics(SAMPLE_METRICS), normalizeGameMetrics(SAMPLE_METRICS)),
@@ -1009,6 +2291,14 @@ function mergeObject(defaultValue, importedValue) {
   return isPlainObject(importedValue) ? { ...defaultValue, ...importedValue } : { ...defaultValue };
 }
 
+function normalizeDrawPity(drawPity = {}) {
+  const source = isPlainObject(drawPity) ? drawPity : {};
+  return Object.fromEntries(Object.keys(INTERNAL_PET_PITY_RULES).map((poolKey) => {
+    const entry = isPlainObject(source[poolKey]) ? source[poolKey] : {};
+    return [poolKey, { sincePet: rewardCount(entry.sincePet || 0) }];
+  }));
+}
+
 function normalizeImportedState(importedState) {
   const initial = createInitialState();
   const source = isPlainObject(importedState) ? importedState : {};
@@ -1016,7 +2306,12 @@ function normalizeImportedState(importedState) {
     ...initial,
     ...source,
     tickets: mergeObject(initial.tickets, source.tickets),
+    drawPoints: mergeObject(initial.drawPoints, source.drawPoints),
+    drawPity: normalizeDrawPity(source.drawPity || initial.drawPity),
     materials: mergeObject(initial.materials, source.materials),
+    eggs: mergeObject(initial.eggs, source.eggs),
+    essences: mergeObject(initial.essences, source.essences),
+    specialResources: mergeObject(initial.specialResources, source.specialResources),
     metrics: normalizeGameMetrics(source.metrics || initial.metrics),
     progress: normalizeProgressSnapshot(source.progress, source.progress?.sourceMetrics || source.metrics || initial.metrics),
     sourceLedger: normalizeSourceLedger(source.sourceLedger || initial.sourceLedger),
@@ -1134,17 +2429,25 @@ function applyBackendEmployeeSnapshot(snapshot = {}) {
   const deltaMetrics = normalizeGameMetrics(snapshot.deltaMetrics || metrics);
   state.metrics = deltaMetrics;
   state.progress = buildProgressSnapshot(
-    { ...sourceMetrics, __periodKey: snapshot.period || currentPeriodKey(), __groups: snapshot.groups || {} },
+    { ...sourceMetrics, __periodKey: snapshot.period || currentPeriodKey(), __groups: snapshot.groups || {}, __basis: snapshot.basis || snapshot.eventBasis || {} },
     sourceMetrics,
     deltaMetrics,
   );
   if (snapshot.replaceInventory) {
     if (isPlainObject(snapshot.tickets)) state.tickets = { ...snapshot.tickets };
+    if (isPlainObject(snapshot.drawPoints)) state.drawPoints = { ...snapshot.drawPoints };
     if (isPlainObject(snapshot.materials)) state.materials = { ...snapshot.materials };
+    if (isPlainObject(snapshot.eggs)) state.eggs = { ...snapshot.eggs };
+    if (isPlainObject(snapshot.essences)) state.essences = { ...snapshot.essences };
+    if (isPlainObject(snapshot.specialResources)) state.specialResources = { ...snapshot.specialResources };
     if (isPlainObject(snapshot.collection)) state.collection = { ...snapshot.collection };
   } else {
     if (isPlainObject(snapshot.tickets)) state.tickets = mergeObject(state.tickets, snapshot.tickets);
+    if (isPlainObject(snapshot.drawPoints)) state.drawPoints = mergeObject(state.drawPoints, snapshot.drawPoints);
     if (isPlainObject(snapshot.materials)) state.materials = mergeObject(state.materials, snapshot.materials);
+    if (isPlainObject(snapshot.eggs)) state.eggs = mergeObject(state.eggs, snapshot.eggs);
+    if (isPlainObject(snapshot.essences)) state.essences = mergeObject(state.essences, snapshot.essences);
+    if (isPlainObject(snapshot.specialResources)) state.specialResources = mergeObject(state.specialResources, snapshot.specialResources);
     if (isPlainObject(snapshot.collection)) state.collection = mergeObject(state.collection, snapshot.collection);
   }
   if (isPlainObject(snapshot.backendConfig)) {
@@ -1200,14 +2503,21 @@ function cloudPlayerStateToSnapshot(data = {}) {
   const resources = isPlainObject(data.resources) ? data.resources : {};
   const collection = isPlainObject(data.collection) ? data.collection : {};
   const ownedCollection = collectionArrayToMap(collection.owned || []);
+  const sourceMetrics = normalizePlayerSourceMetrics(data.source_metrics || data.sourceMetrics || {});
   const snapshot = {
     period: data.period || currentPeriodKey(),
-    sourceMetrics: data.source_metrics || data.sourceMetrics || {},
-    deltaMetrics: data.latest_delta || data.delta_metrics || data.deltaMetrics || {},
+    sourceMetrics,
+    deltaMetrics: normalizePlayerSourceMetrics(data.latest_delta || data.delta_metrics || data.deltaMetrics || sourceMetrics),
+    basis: data.event_basis || data.eventBasis || {},
+    drawPoints: isPlainObject(resources.draw_points) ? resources.draw_points : {},
     tickets: cloudResourcesToTickets(resources),
     materials: resources.materials || {},
+    eggs: resources.eggs || {},
+    essences: resources.essences || {},
+    specialResources: resources.special_resources || resources.specialResources || {},
     collection: ownedCollection,
     backendConfig: data.backend_config || data.backendConfig || {},
+    settlementSummary: data.latest_settlement || data.settlement_summary || data.settlementSummary || data.latest_reward_event || data.reward_summary || data.rewardSummary || null,
     replaceInventory: Boolean(data.reset_cleared || data.reset?.cleared),
   };
   if (data.active_pet?.pet_id) snapshot.activePetId = data.active_pet.pet_id;
@@ -1224,6 +2534,7 @@ function applyCloudPlayerState(data = {}) {
   const snapshot = cloudPlayerStateToSnapshot(data);
   applyBackendEmployeeSnapshot(snapshot);
   if (snapshot.activePetId && getPet(snapshot.activePetId)) state.activePetId = snapshot.activePetId;
+  if (snapshot.settlementSummary) state.latestSettlementSummary = snapshot.settlementSummary;
   state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-playerState" : "cloud-playerState";
   saveState();
   render();
@@ -1266,13 +2577,17 @@ function mockCloudEnvelope(action, payload = {}) {
         latest_import: { import_id: "mock_import_001", published_at: new Date().toISOString() },
         source_metrics: SAMPLE_METRICS,
         awarded_metrics: SAMPLE_METRICS,
+        event_basis: { e_daily_numerator: 7, e_valid: 7, e_total: 16, valid_days: 4, bcd_valid: 7, monthly_policy_development_plus_showing: 6 },
         latest_delta: { ...normalizeGameMetrics(SAMPLE_METRICS), calls: 5 },
         resources: {
           draw_points: { report_points: 8, daily_free: 3, bonus_draw: 0 },
           tickets: { general: 6, boosted: 2, result: 3, blessing: 0 },
           materials: { development_core: 12, listing_core: 2, meeting_core: 1, showing_core: 1, call_core: 2 },
+          eggs: { pet_call_003: 1 },
+          essences: { call_essence: 6, development_essence: 3 },
+          special_resources: { templeBlessing: 0 },
         },
-        reset: { available: true, warning: "重置會清空卡片庫、寵物、碎片、素材、抽卡紀錄、每日免費抽、月榜第一與加碼，只保留報表重新計算的抽卡點數" },
+        reset: { available: true, warning: "重置會清空卡片庫、寵物、星魂、蛋、精華、素材、抽卡紀錄、每日免費抽、月榜第一與加碼，只保留報表重新計算的抽卡點數" },
         active_pet: { pet_id: "pet_dev_001" },
         collection: {
           owned: [
@@ -1383,6 +2698,9 @@ function mockCloudEnvelope(action, payload = {}) {
       draw_points: { report_points: 0, daily_free: 0, bonus_draw: 0 },
       tickets: { general: 0, boosted: 0, result: 0, blessing: 0 },
       materials: {},
+      eggs: {},
+      essences: {},
+      special_resources: {},
       fragments: {},
     };
     playerState.collection = { owned: [], summary: { owned_kinds: 0, total_kinds: PETS.length, by_storyline: [] } };
@@ -1467,6 +2785,7 @@ function cloudImportSheetId() {
 }
 
 const EXCEL_REPORT_COLUMNS = {
+  effective_days: 2,
   d1_schedule: 4,
   d1_face_schedule: 5,
   buy_listing_line: 6,
@@ -1837,16 +3156,54 @@ function excelMetricPair(grid, startRow, key) {
   };
 }
 
+function rawReportMetricValue(metrics, key, side = "valid") {
+  return metricPairValue(metrics, key, side);
+}
+
+function excelGameMetrics(metrics) {
+  return normalizeGameMetrics({
+    area: rawReportMetricValue(metrics, "a_area_total", "total"),
+    development: rawReportMetricValue(metrics, "b_development_total", "valid"),
+    negotiation: rawReportMetricValue(metrics, "c_negotiation_total", "valid"),
+    showing: rawReportMetricValue(metrics, "d_sales_total", "total"),
+    momentum: rawReportMetricValue(metrics, "d1_schedule", "total") + rawReportMetricValue(metrics, "d1_face_schedule", "total"),
+    calls: rawReportMetricValue(metrics, "calls", "valid"),
+    listing: rawReportMetricValue(metrics, "listing", "valid") + rawReportMetricValue(metrics, "rent_listing", "valid"),
+    offer: 0,
+    price: rawReportMetricValue(metrics, "price_revision", "valid"),
+    meeting: rawReportMetricValue(metrics, "meeting_or_offer", "valid") + rawReportMetricValue(metrics, "rent_meeting_or_offer", "valid"),
+    contract: rawReportMetricValue(metrics, "contract", "valid") + rawReportMetricValue(metrics, "rent_contract", "valid"),
+  });
+}
+
+function normalizePlayerSourceMetrics(metrics = {}) {
+  if (isPlainObject(metrics) && ("a_area_total" in metrics || "b_development_total" in metrics || "d_sales_total" in metrics)) {
+    return excelGameMetrics(metrics);
+  }
+  return normalizeGameMetrics(metrics);
+}
+
 function excelEventBasis(metrics) {
   const valid = (key) => Number(metrics[key]?.valid || 0);
-  const total = (key) => Number(metrics[key]?.total || valid(key));
+  const total = (key) => {
+    const value = metrics[key]?.total;
+    return value === undefined || value === null || value === "" ? valid(key) : Number(value || 0);
+  };
   const bcdValid = valid("b_development_total") + valid("c_negotiation_total") + valid("d_sales_total");
   const eValid = valid("e_total_group");
   const eTotal = total("e_total_group");
   const monthlyPolicy = valid("b_development_total") + valid("d_showing_group");
   return {
+    valid_days: valid("effective_days"),
+    e_daily_numerator: eValid,
     e_valid: eValid,
     e_total: eTotal,
+    area_total_groups: total("a_area_total"),
+    development_seen_groups: valid("b_development_total"),
+    development_total_groups: total("b_development_total"),
+    sales_total_groups: total("d_sales_total"),
+    showing_groups: valid("d_showing_group"),
+    buyer_deal_count: total("d_showing_group"),
     bcd_valid: bcdValid,
     bcd_valid_gt_4: bcdValid > 4,
     e_valid_progress_tier: eValid >= 4 ? 4 : eValid >= 3 ? 3 : 0,
@@ -2004,7 +3361,7 @@ function requestResetProgress() {
   const shouldReset =
     typeof window !== "object" ||
     typeof window.confirm !== "function" ||
-    window.confirm(`全部重置 ${PROFILE.agent} 的進度？卡片庫、寵物、碎片、素材、抽卡紀錄、每日免費抽、月榜第一與加碼都會清除；只保留 A/B/C/D 行程與成果項重新計算出的抽卡點數。`);
+    window.confirm(`全部重置 ${PROFILE.agent} 的進度？卡片庫、寵物、星魂、蛋、精華、素材、抽卡紀錄、每日免費抽、月榜第一與加碼都會清除；只保留行程與成果項重新計算出的抽卡點數。`);
   if (!shouldReset) return false;
   if (CLOUD_API_BASE_URL) {
     resetCloudProgress();
@@ -2029,7 +3386,7 @@ async function resetCloudProgress() {
     state.history.unshift({
       type: "system",
       at: new Date().toISOString(),
-      text: "雲端重置完成，已依規則清空卡片庫、素材、碎片與加碼。",
+      text: "雲端重置完成，已依規則清空卡片庫、星魂、蛋、精華、素材與加碼。",
     });
     state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-resetPlayer" : "cloud-resetPlayer";
     saveState();
@@ -2088,6 +3445,92 @@ function fallbackStorylineName(storylineId) {
   return names[storylineId] || storylineId;
 }
 
+function storylineResourceKey(storylineId = "") {
+  const value = String(storylineId || "");
+  if (value.includes("development") || value === "development") return "development";
+  if (value.includes("call") || value === "call") return "call";
+  if (value.includes("showing") || value === "showing") return "showing";
+  if (value.includes("listing") || value === "listing") return "listing";
+  if (value.includes("contract") || value === "contract") return "contract";
+  return value.replace(/^sl_/, "").replace(/_.*$/, "") || "development";
+}
+
+function essenceKeyForStoryline(storylineId = "") {
+  return `${storylineResourceKey(storylineId)}_essence`;
+}
+
+function essenceLabelForStoryline(storylineId = "") {
+  const key = storylineResourceKey(storylineId);
+  return STORYLINE_ESSENCE_LABELS[key] || `${fallbackStorylineName(storylineId)}精華`;
+}
+
+function eggLabel(pet) {
+  return `${pet?.name || "寵物"}蛋`;
+}
+
+function essenceCount(storylineId) {
+  return rewardCount(state.essences?.[essenceKeyForStoryline(storylineId)] || 0);
+}
+
+function eggCount(petId) {
+  return rewardCount(state.eggs?.[petId] || 0);
+}
+
+function addEgg(petId, amount = 1) {
+  state.eggs = isPlainObject(state.eggs) ? state.eggs : {};
+  state.eggs[petId] = rewardCount(state.eggs[petId] || 0) + rewardCount(amount);
+  return state.eggs[petId];
+}
+
+function addEssence(storylineId, amount = 1) {
+  state.essences = isPlainObject(state.essences) ? state.essences : {};
+  const key = essenceKeyForStoryline(storylineId);
+  state.essences[key] = rewardCount(state.essences[key] || 0) + rewardCount(amount);
+  return state.essences[key];
+}
+
+function createOwnedPet(pet) {
+  return {
+    user_id: PROFILE.userKey,
+    pet_id: pet.pet_id,
+    level: 1,
+    exp: 0,
+    star: 1,
+    current_form: pet.base_form,
+    duplicate_fragments: 0,
+    owned_count: 1,
+    first_acquired_at: new Date().toISOString(),
+    last_upgraded_at: new Date().toISOString(),
+    awakened: false,
+    ultimate: false,
+    level_system_reserved: true,
+  };
+}
+
+function canHatchPet(petId) {
+  const pet = getPet(petId);
+  return Boolean(pet && !getOwned(petId) && eggCount(petId) > 0 && essenceCount(pet.storyline_id) >= HATCH_ESSENCE_COST);
+}
+
+function hatchPet(petId) {
+  const pet = getPet(petId);
+  if (!pet || !canHatchPet(petId)) return;
+  const essenceKey = essenceKeyForStoryline(pet.storyline_id);
+  state.eggs[petId] = Math.max(0, rewardCount(state.eggs[petId] || 0) - 1);
+  state.essences[essenceKey] = Math.max(0, rewardCount(state.essences[essenceKey] || 0) - HATCH_ESSENCE_COST);
+  state.collection[petId] = createOwnedPet(pet);
+  state.activePetId = petId;
+  state.history.unshift({
+    type: "system",
+    at: new Date().toISOString(),
+    text: `${eggLabel(pet)}孵化成功，${pet.name} 加入隊伍。`,
+  });
+  state.history = state.history.slice(0, 12);
+  saveState();
+  render();
+  triggerCelebration(drawOutcomeTone(state.history[0], pet));
+}
+
 function ensureCollectionStoryline() {
   const storylines = getStorylines();
   if (!storylines.length) return;
@@ -2113,20 +3556,7 @@ function ensureStarterPet() {
   const starter = PETS.find((pet) => pet.can_be_drawn && pet.rarity === "N") || PETS.find((pet) => pet.can_be_drawn) || PETS[0];
   if (!activeExists && starter) state.activePetId = starter.pet_id;
   if (starter && !state.collection[starter.pet_id]) {
-    state.collection[starter.pet_id] = {
-      user_id: PROFILE.userKey,
-      pet_id: starter.pet_id,
-      level: 1,
-      exp: 0,
-      star: 1,
-      current_form: starter.base_form,
-      duplicate_fragments: 0,
-      owned_count: 1,
-      first_acquired_at: new Date().toISOString(),
-      last_upgraded_at: new Date().toISOString(),
-      awakened: false,
-      ultimate: false,
-    };
+    state.collection[starter.pet_id] = createOwnedPet(starter);
   }
 }
 
@@ -2174,6 +3604,8 @@ function normalizeExternalPet(pet) {
     card_effect_summary: pet.card_effect_summary || "",
     image_url: normalizePetAssetUrl(pet.image_url || pet.image_asset),
     thumbnail_url: normalizePetAssetUrl(pet.thumbnail_url || pet.thumbnail_asset || pet.image_url || pet.image_asset),
+    egg_image_url: normalizePetAssetUrl(pet.egg_image_url || pet.egg_image_asset),
+    egg_thumbnail_url: normalizePetAssetUrl(pet.egg_thumbnail_url || pet.egg_thumbnail_asset || pet.egg_image_url || pet.egg_image_asset),
     line_title: pet.line_title || pet.name,
     line_subtitle: pet.line_subtitle || "",
     palette: Array.isArray(pet.palette) ? pet.palette : ["#64748b", "#f0c866", "#203555"],
@@ -2271,7 +3703,7 @@ function buildActivePetGrowthGoals(pet, owned) {
     const cost = starCost(nextStar);
     goals.push({
       title: "王牌型",
-      detail: owned.star >= 5 ? "已達 5 星" : `星級 ${owned.star}/5，碎片 ${owned.duplicate_fragments}/${cost} 升 ${nextStar} 星`,
+      detail: owned.star >= 5 ? "已達 5 星" : `星級 ${owned.star}/5，星魂 ${owned.duplicate_fragments}/${cost} 升 ${nextStar} 星`,
       done: owned.star >= 5,
     });
   }
@@ -2300,7 +3732,7 @@ function buildActivePetGrowthGoals(pet, owned) {
         ? "究極型已完成"
         : !owned.awakened
           ? "先完成覺醒，再合成究極"
-          : `碎片 ${owned.duplicate_fragments}/${fragmentCost}，素材 ${materialText}`,
+          : `星魂 ${owned.duplicate_fragments}/${fragmentCost}，素材 ${materialText}`,
       done: owned.ultimate,
     });
   }
@@ -2421,7 +3853,7 @@ function buildRewardNextStep(rewards = state.lastRewards) {
   }
   if (materialReport?.materialReady && materialReport?.starLocked) {
     return {
-      text: `${materialReport.petName} 覺醒素材已足，下一步收碎片升到 5 星。`,
+      text: `${materialReport.petName} 覺醒素材已足，下一步收星魂升到 5 星。`,
       view: "collection",
       label: "去升星",
     };
@@ -2449,6 +3881,76 @@ function rewardNextStepMarkup(nextStep) {
     text: `<span class="next-step-text">下一步：${escapeHtml(nextStep.text)}</span>`,
     button: `<button class="secondary-button" type="button" data-view="${escapeHtml(nextStep.view)}">${escapeHtml(nextStep.label)}</button>`,
   };
+}
+
+function metricDeltaSummary(metricsSource = {}) {
+  const metrics = normalizeGameMetrics(metricsSource);
+  const items = [
+    ["showing", "帶看", "組"],
+    ["development", "拜訪", "組"],
+    ["negotiation", "回報", "組"],
+    ["listing", "委託", "件"],
+    ["meeting", "見面談", "件"],
+    ["contract", "成件", "件"],
+  ].filter(([key]) => Number(metrics[key] || 0) > 0)
+    .map(([key, label, unit]) => `${label} +${formatMetricValue(metrics[key])}${unit}`);
+  return items.length ? items.slice(0, 4).join("、") : "本次沒有新增差額";
+}
+
+function backendSettlementSummaryText(summary) {
+  if (!summary) return "";
+  if (typeof summary === "string") return summary;
+  if (!isPlainObject(summary)) return "";
+  return summary.player_message || summary.message || summary.summary_text || summary.text || summary.note || "";
+}
+
+function routeProgressFromMetrics(metricsSource = {}) {
+  const metrics = normalizeGameMetrics(metricsSource);
+  if (Number(metrics.showing || 0) > 0 || Number(metrics.meeting || 0) > 0) return `帶看小旅行前進：帶看/見面談 +${formatMetricValue(Number(metrics.showing || 0) + Number(metrics.meeting || 0))}`;
+  if (Number(metrics.development || 0) > 0) return `開發遠征隊前進：拜訪 +${formatMetricValue(metrics.development)}組`;
+  if (Number(metrics.listing || 0) > 0) return `委託種子園前進：委託 +${formatMetricValue(metrics.listing)}件`;
+  if (Number(metrics.contract || 0) > 0) return `成交神殿前進：成件 +${formatMetricValue(metrics.contract)}件`;
+  return "路線等待下一筆有效行程或成果";
+}
+
+function rewardTicketSummary(rewards = {}) {
+  const parts = ticketDeltaParts(rewards);
+  if (parts.length) return `新券：${parts.join("、")}`;
+  return "新券：本次未新增，先看下一個主任務";
+}
+
+function petStateSummaryFromRewards(rewards = {}) {
+  if (rewards.petGrowth) return petGrowthSummary(rewards.petGrowth);
+  const pet = getActivePet();
+  const owned = pet ? getOwned(pet.pet_id) : null;
+  if (!pet || !owned) return "主寵狀態等待資料同步";
+  return `${pet.name} Lv.${owned.level || 1}，${homePetStarCue(pet, owned)}`;
+}
+
+function buildSettlementLoopCard(rewards = state.lastRewards, settlement = state.dailySettlements?.[todayKey()]) {
+  if (!settlement && !rewards) return "";
+  const summaryText = backendSettlementSummaryText(settlement?.summary || settlement?.settlementSummary || state.latestSettlementSummary);
+  const metrics = normalizeGameMetrics(settlement?.deltaMetrics || settlement?.metrics || state.metrics || {});
+  const mission = buildPilotMission(state.metrics);
+  const intakeLine = summaryText || metricDeltaSummary(metrics);
+  const routeLine = routeProgressFromMetrics(metrics);
+  const petLine = petStateSummaryFromRewards(rewards);
+  const ticketLine = rewardTicketSummary(rewards);
+  return `
+    <article class="settlement-loop-card">
+      <span>本次入帳閉環</span>
+      <ol>
+        <li><b>入帳</b><em>${escapeHtml(intakeLine)}</em></li>
+        <li><b>路線</b><em>${escapeHtml(routeLine)}</em></li>
+        <li><b>主寵</b><em>${escapeHtml(petLine)}</em></li>
+        <li><b>獎勵</b><em>${escapeHtml(ticketLine)}</em></li>
+      </ol>
+      <div class="settlement-next-action">
+        <strong>下一個行動：${escapeHtml(mission.title)}</strong>
+        <button class="primary-button" type="button" data-pilot-mission="${escapeHtml(mission.key)}">${escapeHtml(mission.buttonLabel)}</button>
+      </div>
+    </article>
+  `;
 }
 
 function addMaterials(items) {
@@ -2549,22 +4051,24 @@ function buildAwakenFocus(pet = getActivePet(), owned = pet ? getOwned(pet.pet_i
 }
 
 function findFirstActionableCollection() {
+  const hatch = PETS.find((pet) => canHatchPet(pet.pet_id));
+  if (hatch) return { pet: hatch, owned: null, type: "hatch", label: "去孵化", text: `${hatch.name} 的蛋與精華已足，可以孵化。` };
   const ownedPets = PETS
     .map((pet) => ({ pet, owned: getOwned(pet.pet_id) }))
     .filter((item) => item.owned);
+  const star = ownedPets.find(({ owned }) => owned.star < 5 && owned.duplicate_fragments >= starCost(owned.star + 1));
+  if (star) return { ...star, type: "star", label: "去升星", text: `${star.pet.name} 星魂已足，可以升星。` };
   const awaken = ownedPets.find(({ pet, owned }) => canAwaken(pet, owned));
   if (awaken) return { ...awaken, type: "awaken", label: "去覺醒", text: `${awaken.pet.name} 已達覺醒條件。` };
   const ultimate = ownedPets.find(({ pet, owned }) => canUltimate(pet, owned));
   if (ultimate) return { ...ultimate, type: "ultimate", label: "究極合成", text: `${ultimate.pet.name} 可以合成究極型。` };
-  const star = ownedPets.find(({ owned }) => owned.star < 5 && owned.duplicate_fragments >= starCost(owned.star + 1));
-  if (star) return { ...star, type: "star", label: "去升星", text: `${star.pet.name} 碎片已足，可以升星。` };
   const materialReady = ownedPets.find(({ pet, owned }) =>
     !owned.awakened &&
     owned.star < 5 &&
     pet.available_forms?.includes("覺醒型") &&
     !missingMaterials(pet.required_awaken_materials).length
   );
-  if (materialReady) return { ...materialReady, type: "material-ready", label: "整理卡片庫", text: `${materialReady.pet.name} 素材已足，先補碎片升星。` };
+  if (materialReady) return { ...materialReady, type: "material-ready", label: "整理卡片庫", text: `${materialReady.pet.name} 素材已足，先補星魂升星。` };
   return null;
 }
 
@@ -2578,7 +4082,7 @@ function buildEntryExperienceCue() {
     return {
       kicker: "現在可操作",
       title: `${PROFILE.agent}，${action.text}`,
-      detail: "先把已經到手的素材或碎片變成戰力，卡片庫會更有推進感。",
+      detail: "先把已經到手的素材或星魂變成戰力，卡片庫會更有推進感。",
       view: "collection",
       label: action.label,
       tone: "hot",
@@ -2609,7 +4113,7 @@ function buildEntryExperienceCue() {
   return {
     kicker: "今日推進",
     title: `${PROFILE.agent}，${pet.name} 今天已經醒來。`,
-    detail: `${growth.detail} 主寵稀有感應已開啟，倍率待設定。`,
+    detail: `${growth.detail} 主寵助力已開啟。`,
     view: "today",
     label: "看成果累積",
     tone: "ready",
@@ -2620,7 +4124,7 @@ function activePetAssistText(pet = getActivePet(), owned = pet ? getOwned(pet.pe
   if (!pet || !owned) return "主寵助力：取得主寵後開啟";
   const rule = state.backendConfig?.assistRules?.[pet.storyline_id] || state.backendConfig?.assistRules?.default;
   if (rule?.label) return `主寵助力：${rule.label}`;
-  return `主寵助力：${currentForm(pet, owned)} 感應已開啟，倍率待設定`;
+  return `主寵助力：${currentForm(pet, owned)} 已陪你推進`;
 }
 
 function configuredDropRates(poolKey) {
@@ -2634,12 +4138,56 @@ function configuredDropRates(poolKey) {
   return Object.keys(normalized).length ? normalized : null;
 }
 
+function drawPacingConfig(poolKey) {
+  return {
+    ...INTERNAL_DRAW_PACING_CONFIG,
+    ...(INTERNAL_DRAW_PACING_CONFIG.pools?.[poolKey] || {}),
+  };
+}
+
+function drawOutcomeWeights(poolKey) {
+  return drawPacingConfig(poolKey).outcomeWeights || INTERNAL_DRAW_PACING_CONFIG.defaultOutcomeWeights;
+}
+
+function weightedChoiceFromMap(weights, fallback) {
+  const entries = Object.entries(weights || {})
+    .map(([key, value]) => [key, Number(value || 0)])
+    .filter(([, value]) => value > 0);
+  const total = entries.reduce((sum, [, value]) => sum + value, 0);
+  if (!entries.length || total <= 0) return fallback;
+  let cursor = Math.random() * total;
+  for (const [key, value] of entries) {
+    cursor -= value;
+    if (cursor <= 0) return key;
+  }
+  return entries.at(-1)[0];
+}
+
+function weightedChoiceFromEntries(entries = [], fallback = null) {
+  const normalized = entries
+    .map((entry) => ({ ...entry, weight: Number(entry.weight || 0) }))
+    .filter((entry) => entry.weight > 0);
+  const total = normalized.reduce((sum, entry) => sum + entry.weight, 0);
+  if (!normalized.length || total <= 0) return fallback;
+  let cursor = Math.random() * total;
+  for (const entry of normalized) {
+    cursor -= entry.weight;
+    if (cursor <= 0) return entry;
+  }
+  return normalized.at(-1);
+}
+
+function drawPacingCue(poolKey) {
+  const config = drawPacingConfig(poolKey);
+  return config.publicCue || INTERNAL_DRAW_PACING_CONFIG.monthlyGoal;
+}
+
 function rarityDisplayText(pool) {
   const rates = configuredDropRates(pool.key);
   if (rates) {
-    return Object.entries(rates).map(([rarity, value]) => `<span class="rarity-badge rarity-${rarity}">${rarity} ${formatMetricValue(value)}%</span>`).join("");
+    return `<span class="soft-pill">本月卡池已調整</span>${(pool.rarityBands || []).map((rarity) => `<span class="rarity-badge rarity-${rarity}">${rarity}</span>`).join("")}`;
   }
-  return `<span class="soft-pill">掉落率待設定</span>${(pool.rarityBands || []).map((rarity) => `<span class="rarity-badge rarity-${rarity}">${rarity}</span>`).join("")}`;
+  return `<span class="soft-pill">本月卡池節奏</span>${(pool.rarityBands || []).map((rarity) => `<span class="rarity-badge rarity-${rarity}">${rarity}</span>`).join("")}`;
 }
 
 function poolCandidates(pool) {
@@ -2666,6 +4214,32 @@ function drawCandidate(pool) {
   return randomFrom(candidates);
 }
 
+function ensureDrawPityState() {
+  state.drawPity = normalizeDrawPity(state.drawPity || {});
+  return state.drawPity;
+}
+
+function shouldForcePetByPity(poolKey) {
+  const rule = INTERNAL_PET_PITY_RULES[poolKey];
+  if (!rule) return false;
+  const pity = ensureDrawPityState()[poolKey];
+  return rewardCount(pity?.sincePet || 0) >= rewardCount(rule.maxMisses || 0);
+}
+
+function drawCandidateWithPity(pool) {
+  const candidates = poolCandidates(pool);
+  if (!candidates.length) return null;
+  if (shouldForcePetByPity(pool.key)) return randomFrom(candidates);
+  return drawCandidate(pool);
+}
+
+function recordDrawPity(poolKey, result = {}) {
+  const rule = INTERNAL_PET_PITY_RULES[poolKey];
+  if (!rule) return;
+  const pity = ensureDrawPityState();
+  pity[poolKey].sincePet = result.pet ? 0 : rewardCount(pity[poolKey].sincePet || 0) + 1;
+}
+
 function poolUnlocked(pool, progress = state.progress || buildProgressSnapshot()) {
   const backendUnlock = state.backendConfig?.poolUnlocks?.[pool.key];
   if (backendUnlock?.unlocked === false) return false;
@@ -2686,14 +4260,15 @@ function poolPriority(pool) {
 
 function poolExperienceCue(pool, candidates, unlocked) {
   const tickets = Number(state.tickets?.[pool.key] || 0);
-  if (!unlocked) return "完成對應行程或成果後，這個卡池會亮起。";
+  const progress = nextTicketProgress(pool.key, state.metrics);
+  if (!unlocked) return `${progress.unlockText}，這個卡池就會亮。`;
   if (tickets > 0) {
     if (pool.key === "result") return "成果券最容易讓覺醒素材與高階夥伴有感。";
-    if (pool.key === "blessing") return "成交神殿池只吃委託、見面談、簽約鏈條。";
+    if (pool.key === "blessing") return "成交神殿池吃高價值成果；0.1 件也會累積回饋。";
     if (pool.key === "boosted") return "高價值行動已點亮，適合推進主寵養成。";
-    return "先把可抽次數用掉，重複卡也會變碎片。";
+    return "先把可抽次數用掉，重複寵物也會變星魂。";
   }
-  return candidates.length ? "目前已解鎖，等下一筆差額或福利抽進來。" : "卡池候選卡待內容包接入。";
+  return candidates.length ? `${progress.unlockText}，這裡就能抽。` : "卡池內容正在接入，先累積行程不會浪費。";
 }
 
 function poolDrawButtonLabel(pool) {
@@ -2702,6 +4277,104 @@ function poolDrawButtonLabel(pool) {
   if (pool.key === "result") return "抽成果種子";
   if (pool.key === "blessing") return "進入神殿";
   return "抽一次";
+}
+
+function poolHookText(poolKey) {
+  if (poolKey === "boosted") return "拜訪＋回報＋銷售越接近，強化抽越快亮。";
+  if (poolKey === "result") return "委託、見面談、成件會把成果池推上來。";
+  if (poolKey === "blessing") return "成件是高價值成果，祝福池要讓人有感。";
+  return "拜訪、社區服務、電話都能把補給池點亮。";
+}
+
+function poolThemeClass(poolKey) {
+  if (poolKey === "boosted") return "theme-blue";
+  if (poolKey === "result") return "theme-orange";
+  if (poolKey === "blessing") return "theme-gold";
+  return "theme-green";
+}
+
+function poolUnlockButtonLabel(poolKey) {
+  const progress = nextTicketProgress(poolKey, state.metrics);
+  if (progress.gap <= 0) return "查看解鎖進度";
+  return `${progress.label}解鎖`;
+}
+
+function showActionToast(message) {
+  let toast = document.getElementById("actionToast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "actionToast";
+    toast.className = "action-toast";
+    toast.setAttribute("role", "status");
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.classList.remove("is-showing");
+  const show = () => toast.classList.add("is-showing");
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(show);
+  else show();
+  window.setTimeout(() => toast.classList.remove("is-showing"), 2600);
+}
+
+function triggerCelebration(tone = "growth") {
+  if (typeof document === "undefined" || !document.body || typeof document.createElement !== "function") return;
+  const burst = document.createElement("div");
+  burst.className = `confetti-burst is-${tone}`;
+  burst.setAttribute("aria-hidden", "true");
+  for (let index = 0; index < 30; index += 1) {
+    const particle = document.createElement("i");
+    particle.style.setProperty("--x", `${Math.round((Math.random() - 0.5) * 220)}px`);
+    particle.style.setProperty("--y", `${Math.round(-80 - Math.random() * 170)}px`);
+    particle.style.setProperty("--r", `${Math.round(Math.random() * 360)}deg`);
+    particle.style.setProperty("--d", `${Math.round(Math.random() * 180)}ms`);
+    burst.appendChild(particle);
+  }
+  document.body.appendChild(burst);
+  window.setTimeout(() => burst.remove(), 1300);
+}
+
+function animateCountUps(container) {
+  if (!container || typeof requestAnimationFrame !== "function") return;
+  container.querySelectorAll("[data-count-to]").forEach((node) => {
+    const target = Number(node.dataset.countTo || 0);
+    const prefix = node.dataset.countPrefix || "";
+    const suffix = node.dataset.countSuffix || "";
+    const start = typeof performance === "object" && typeof performance.now === "function" ? performance.now() : Date.now();
+    const duration = 620;
+    const tick = (now) => {
+      const ratio = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - ratio, 3);
+      node.textContent = `${prefix}${Math.round(target * eased)}${suffix}`;
+      if (ratio < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+function handlePoolUnlockClick(poolKey) {
+  const mission = buildPilotMission(state.metrics);
+  showActionToast(`${mission.title}，${mission.rewardText}。`);
+  switchToView("today");
+  window.setTimeout(() => {
+    const card = document.querySelector("[data-pilot-mission-card='1']");
+    if (!card) return;
+    card.classList.add("is-focus");
+    card.scrollIntoView({ block: "center", behavior: "smooth" });
+    window.setTimeout(() => card.classList.remove("is-focus"), 1800);
+  }, 80);
+}
+
+function handlePilotMissionClick() {
+  const mission = buildPilotMission(state.metrics);
+  showActionToast(`${mission.title}，${mission.detail}`);
+  switchToView("today");
+  window.setTimeout(() => {
+    const card = document.querySelector("[data-pilot-mission-card='1']") || document.querySelector(mission.focusSelector);
+    if (!card) return;
+    card.classList.add("is-focus");
+    card.scrollIntoView({ block: "center", behavior: "smooth" });
+    window.setTimeout(() => card.classList.remove("is-focus"), 1800);
+  }, 80);
 }
 
 function todayKey(date = new Date()) {
@@ -2929,7 +4602,7 @@ function buildDailyQuests(rawMetrics) {
       current: boostedProgress,
       target: 3,
       done: boostedProgress >= 3,
-      message: boostedProgress >= 3 ? "今日已達強化池門檻" : `B+C+D 有效再 ${3 - boostedProgress} 組`,
+      message: boostedProgress >= 3 ? "今日已達強化池門檻" : `拜訪＋回報＋銷售再 ${3 - boostedProgress} 組`,
     },
     {
       key: "result",
@@ -3054,6 +4727,7 @@ function settleMetrics(rawMetrics) {
   state.history = state.history.slice(0, 12);
   saveState();
   render();
+  triggerCelebration(rewards.petGrowth ? "pet" : rewards.blessing > 0 ? "rare" : rewards.general > 0 || rewards.result > 0 ? "ticket" : "growth");
   return true;
 }
 
@@ -3072,9 +4746,9 @@ function parseCsv(text) {
       const key = headerToMetricKey(header);
       if (!key) return;
       const parsed = parseReportMetricCell(cells[index]);
-      sums[key] += parsed.weighted;
+      sums[key] += reportMetricValueForHeader(header, key, parsed);
       groups[key].effective += parsed.effective;
-      groups[key].total += parsed.total;
+      groups[key].total += reportMetricTotalForHeader(header, key, parsed);
     });
   });
   return { ...normalizeGameMetrics(sums), __periodKey: periodKey, __groups: normalizeReportGroups({ __groups: groups }, sums) };
@@ -3156,10 +4830,117 @@ function parseReportMetricCell(value) {
   return { effective, total: effective, weighted: effective };
 }
 
+function reportMetricValueForHeader(header, key, parsed) {
+  const normalized = normalizeReportHeader(header);
+  if (key === "area" && normalized.includes("家戶經營")) return parsed.total;
+  if (key === "showing" && normalized.includes("銷售")) return parsed.total;
+  if (key === "showing" && normalized.includes("成交買")) return parsed.effective;
+  return parsed.weighted;
+}
+
+function reportMetricTotalForHeader(header, key, parsed) {
+  const normalized = normalizeReportHeader(header);
+  if (key === "showing" && normalized.includes("成交買")) return parsed.effective;
+  return parsed.total;
+}
+
 function headerToMetricKey(header) {
   const normalized = normalizeReportHeader(header);
   if (EXACT_REPORT_HEADERS[normalized]) return EXACT_REPORT_HEADERS[normalized];
   return REPORT_HEADER_RULES.find(([, aliases]) => aliases.some((alias) => normalized.includes(alias)))?.[0];
+}
+
+function rollEssenceAmount() {
+  const selected = weightedChoiceFromEntries(INTERNAL_DRAW_PACING_CONFIG.essenceAmountWeights, { amount: 1 });
+  return rewardCount(selected?.amount || 1);
+}
+
+function rollDrawOutcomeKind(pool) {
+  if (shouldForcePetByPity(pool.key)) return "pet";
+  return weightedChoiceFromMap(drawOutcomeWeights(pool.key), "essence");
+}
+
+function applyPetDrawResult(pet) {
+  const existing = getOwned(pet.pet_id);
+  if (!existing) {
+    state.collection[pet.pet_id] = createOwnedPet(pet);
+    return {
+      outcomeKind: "pet",
+      duplicate: false,
+      fragmentsAdded: 0,
+      text: "新夥伴加入卡片庫",
+    };
+  }
+
+  existing.owned_count = rewardCount(existing.owned_count || 1) + 1;
+  existing.last_upgraded_at = new Date().toISOString();
+  if (existing.star < 5) {
+    existing.duplicate_fragments = rewardCount(existing.duplicate_fragments || 0) + 1;
+    return {
+      outcomeKind: "star_soul",
+      duplicate: true,
+      fragmentsAdded: 1,
+      text: `${pet.name}星魂 +1`,
+    };
+  }
+
+  if (isContractTempleStoryline(pet.storyline_id)) {
+    state.specialResources = isPlainObject(state.specialResources) ? state.specialResources : {};
+    state.specialResources.templeBlessing = rewardCount(state.specialResources.templeBlessing || 0) + 1;
+    return {
+      outcomeKind: "temple_blessing",
+      duplicate: true,
+      fragmentsAdded: 0,
+      text: "神殿祝福 +1，可保留未來指定兌換",
+    };
+  }
+
+  addEssence(pet.storyline_id, 5);
+  return {
+    outcomeKind: "essence_conversion",
+    duplicate: true,
+    fragmentsAdded: 0,
+    essenceKey: essenceKeyForStoryline(pet.storyline_id),
+    essenceLabel: essenceLabelForStoryline(pet.storyline_id),
+    essenceAmount: 5,
+    text: `滿星重複化為 ${essenceLabelForStoryline(pet.storyline_id)} ×5`,
+  };
+}
+
+function buildLocalDrawResult(pool) {
+  const pet = drawCandidate(pool);
+  if (!pet) return null;
+  const outcomeKind = rollDrawOutcomeKind(pool);
+  if (outcomeKind === "pet") {
+    return { pet, ...applyPetDrawResult(pet) };
+  }
+  if (outcomeKind === "egg") {
+    addEgg(pet.pet_id, 1);
+    return {
+      pet,
+      outcomeKind: "egg",
+      duplicate: false,
+      fragmentsAdded: 0,
+      eggPetId: pet.pet_id,
+      resourceLabel: eggLabel(pet),
+      resourceAmount: 1,
+      text: `${eggLabel(pet)} +1`,
+    };
+  }
+  const amount = rollEssenceAmount();
+  addEssence(pet.storyline_id, amount);
+  return {
+    pet,
+    outcomeKind: "essence",
+    duplicate: false,
+    fragmentsAdded: 0,
+    essenceKey: essenceKeyForStoryline(pet.storyline_id),
+    essenceLabel: essenceLabelForStoryline(pet.storyline_id),
+    essenceAmount: amount,
+    resourceLabel: essenceLabelForStoryline(pet.storyline_id),
+    resourceAmount: amount,
+    text: `${essenceLabelForStoryline(pet.storyline_id)} ×${amount}`,
+  };
 }
 
 async function draw(poolKey) {
@@ -3170,48 +4951,29 @@ async function draw(poolKey) {
   }
   const pool = POOLS.find((item) => item.key === poolKey);
   if (!pool || state.tickets[poolKey] <= 0) return;
-  const pet = drawCandidate(pool);
-  if (!pet) return;
+  const result = buildLocalDrawResult(pool);
+  if (!result?.pet) return;
+  const { pet } = result;
   state.tickets[poolKey] -= 1;
+  recordDrawPity(poolKey, { pet: ["pet", "star_soul", "essence_conversion", "temple_blessing"].includes(result.outcomeKind) ? pet : null });
   const assistText = activePetAssistText();
-  const existing = getOwned(pet.pet_id);
-  let resultText = "";
-  let duplicate = false;
-  let fragmentsAdded = 0;
-  if (existing) {
-    const gained = duplicateFragments(pet.rarity);
-    existing.duplicate_fragments += gained;
-    existing.owned_count += 1;
-    duplicate = true;
-    fragmentsAdded = gained;
-    resultText = `重複轉成碎片 +${gained}`;
-  } else {
-    state.collection[pet.pet_id] = {
-      user_id: PROFILE.userKey,
-      pet_id: pet.pet_id,
-      level: 1,
-      exp: 0,
-      star: 1,
-      current_form: pet.base_form,
-      duplicate_fragments: 0,
-      owned_count: 1,
-      first_acquired_at: new Date().toISOString(),
-      last_upgraded_at: new Date().toISOString(),
-      awakened: false,
-      ultimate: false,
-    };
-    resultText = "新寵物加入卡片庫";
-  }
-  state.activePetId = pet.pet_id;
+  if (result.outcomeKind === "pet") state.activePetId = pet.pet_id;
   state.history.unshift({
     type: "draw",
     at: new Date().toISOString(),
     petId: pet.pet_id,
-    text: `${pool.name} 抽到 ${pet.name}，${resultText}`,
+    text: `${pool.name} 抽到 ${result.text}`,
     assistText,
     poolKey,
-    duplicate,
-    fragmentsAdded,
+    duplicate: Boolean(result.duplicate),
+    fragmentsAdded: rewardCount(result.fragmentsAdded || 0),
+    outcomeKind: result.outcomeKind,
+    eggPetId: result.eggPetId || "",
+    essenceKey: result.essenceKey || "",
+    essenceLabel: result.essenceLabel || "",
+    essenceAmount: rewardCount(result.essenceAmount || 0),
+    resourceLabel: result.resourceLabel || "",
+    resourceAmount: rewardCount(result.resourceAmount || 0),
     rateMode: configuredDropRates(pool.key) ? "backend-configured" : "prototype-unweighted",
   });
   state.history = state.history.slice(0, 12);
@@ -3233,8 +4995,9 @@ async function drawCloud(poolKey) {
     const data = cloudEnvelopeData(envelope, "draw");
     if (!data || !data.pet || !data.player_state) throw new Error("draw response missing pet/player_state");
     applyCloudPlayerState(data.player_state);
+    recordDrawPity(poolKey, { pet: data.pet });
     const pet = getPet(data.pet.pet_id) || data.pet;
-    const resultText = data.duplicate ? `重複轉成碎片 +${rewardCount(data.fragments_added)}` : "新寵物加入卡片庫";
+    const resultText = data.duplicate ? `${pet.name || data.pet.pet_id}星魂 +${rewardCount(data.fragments_added)}` : "新寵物加入卡片庫";
     state.history.unshift({
       type: "draw",
       at: new Date().toISOString(),
@@ -3244,12 +5007,14 @@ async function drawCloud(poolKey) {
       poolKey,
       duplicate: Boolean(data.duplicate),
       fragmentsAdded: rewardCount(data.fragments_added),
+      outcomeKind: data.duplicate ? "star_soul" : "pet",
       rateMode: "cloud",
     });
     state.history = state.history.slice(0, 12);
     state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-draw" : "cloud-draw";
     saveState();
     render();
+    triggerCelebration(drawOutcomeTone(state.history[0], pet));
     return true;
   } catch (error) {
     state.manager.cloudStatus = `cloud-draw-error:${error.message || "unknown"}`;
@@ -3279,7 +5044,7 @@ function duplicateFragments(rarity) {
 }
 
 function starCost(nextStar) {
-  return { 2: 3, 3: 8, 4: 15, 5: 30 }[nextStar] || 0;
+  return { 2: 1, 3: 2, 4: 3, 5: 4 }[nextStar] || 0;
 }
 
 function upgradeStar(petId) {
@@ -3375,6 +5140,8 @@ function renderShellMode() {
   if (managerDashboard) managerDashboard.hidden = !MANAGER_MODE || isLoginRequired;
   document.body?.classList?.toggle("is-manager-mode", MANAGER_MODE);
   document.body?.classList?.toggle("is-employee-login-required", isLoginRequired);
+  const maintenanceMenu = document.getElementById("maintenanceMenu");
+  if (maintenanceMenu) maintenanceMenu.hidden = !MANAGER_MODE;
   ["backupBtn", "restoreBtn", "resetBtn"].forEach((id) => {
     const element = document.getElementById(id);
     if (element) element.hidden = !MANAGER_MODE;
@@ -3419,10 +5186,14 @@ function renderProfile() {
         ? " · mock雲端"
         : " · 雲端資料"
     : "";
+  const employeeId = PROFILE.employeeId || PROFILE.userKey;
+  const agentLabel = String(PROFILE.agent || "").includes(employeeId) || String(PROFILE.agent || "").includes("員編")
+    ? ""
+    : ` · ${PROFILE.agent}`;
   if (branchLabel) {
     branchLabel.textContent = MANAGER_MODE
       ? `${PROFILE.branch} · 店長儀表板${cloudLabel}`
-      : `${PROFILE.branch} · ${PROFILE.agent} · 員編 ${PROFILE.employeeId || PROFILE.userKey}${cloudLabel}`;
+      : `${PROFILE.branch}${agentLabel} · 員編 ${employeeId}${cloudLabel}`;
   }
   const switchButton = document.getElementById("switchEmployeeBtn");
   if (switchButton) switchButton.textContent = MANAGER_MODE ? "離開店長模式" : "登出 / 更換員編";
@@ -3438,19 +5209,18 @@ function renderActivePet() {
     <div class="pet-name-row">
       <h2>${pet.name}</h2>
       <span class="rarity-badge rarity-${pet.rarity}">${pet.rarity}</span>
-      <span class="soft-pill">${escapeHtml(PROFILE.agent)}的夥伴</span>
       <span class="soft-pill">${currentForm(pet, owned)}</span>
     </div>
-    <p class="small-text">${pet.card_effect_summary}</p>
-    <p class="assist-line">${escapeHtml(activePetAssistText(pet, owned))}</p>
+    <p class="small-text">今天行程養等級，今天成果推覺醒。</p>
     <div class="stat-line">
       <div class="team-topline"><span>Lv.${owned?.level || 1}</span><span>${owned?.exp || 0}/${expMax}</span></div>
       <div class="bar"><span style="width:${expPercent}%"></span></div>
     </div>
     <div class="pool-meta">
       <span class="material-pill">${"★".repeat(owned?.star || 1)}${"☆".repeat(5 - (owned?.star || 1))}</span>
-      <span class="material-pill">碎片 ${owned?.duplicate_fragments || 0}</span>
+      <span class="material-pill">星魂 ${owned?.duplicate_fragments || 0}</span>
     </div>
+    <p class="pet-compact-note">${escapeHtml(activePetAssistText(pet, owned))}</p>
     ${renderActiveGrowthGoals(pet, owned)}
   `;
 }
@@ -3474,31 +5244,19 @@ function renderActiveGrowthGoals(pet, owned) {
 function renderEntrySummon() {
   const summon = document.getElementById("entrySummon");
   if (!summon) return;
-  const pet = getActivePet();
-  const owned = getOwned(pet.pet_id);
-  const settled = Boolean(state.dailySettlements?.[todayKey()]?.awarded);
-  const tickets = totalTickets();
-  const streak = state.settlementStreak?.count || 0;
-  const cue = buildEntryExperienceCue();
-  const secondaryView = cue.view === "collection" ? "gacha" : "collection";
-  const secondaryLabel = secondaryView === "gacha" ? "看抽卡額度" : "看卡片庫";
+  const sourceMetrics = normalizeGameMetrics((state.progress?.sourceMetrics || state.progress?.deltaMetrics || state.metrics || {}));
+  const deltaMetrics = normalizeGameMetrics((state.progress?.deltaMetrics || state.metrics || {}));
+  const progress = state.progress || buildProgressSnapshot(state.metrics);
+  const priority = buildHomePriorityCard();
   summon.innerHTML = `
-    <div class="summon-copy summon-tone-${escapeHtml(cue.tone)}">
-      <span class="summon-kicker">${escapeHtml(cue.kicker)}</span>
-      <strong>${escapeHtml(cue.title)}</strong>
-      <p>${escapeHtml(cue.detail)}</p>
-      <span class="assist-line">${escapeHtml(activePetAssistText(pet, owned))}</span>
-    </div>
-    <div class="summon-status">
-      <span class="material-pill">${settled ? "今日已結算" : "待結算"}</span>
-      <span class="soft-pill">可抽 ${tickets} 次</span>
-      <span class="soft-pill">連續 ${streak} 天</span>
-      <span class="soft-pill">${escapeHtml(currentForm(pet, owned))} Lv.${owned?.level || 1}</span>
-    </div>
-    <div class="summon-actions">
-      <button class="primary-button" type="button" data-view="${escapeHtml(cue.view)}">${escapeHtml(cue.label)}</button>
-      <button class="secondary-button" type="button" data-view="${secondaryView}">${secondaryLabel}</button>
-    </div>
+    ${buildHomeHeroPanel(sourceMetrics, progress.period, priority)}
+    ${buildHomeFunctionDock()}
+    ${buildHomeMonthResetCard(sourceMetrics, progress.period)}
+    ${buildHomeTodayChangeStrip(deltaMetrics)}
+    ${buildHomeTicketStrip()}
+    ${buildHomeResourceStrip()}
+    ${buildHomeMetricsStrip(sourceMetrics)}
+    ${buildHomeHelpDrawer(sourceMetrics)}
   `;
 }
 
@@ -3507,12 +5265,29 @@ function progressPercent(current, target) {
   return Math.max(0, Math.min(100, Math.round((Number(current || 0) / Number(target || 1)) * 100)));
 }
 
+function contractTempleProgressCue(progress) {
+  const current = normalizeMetricValue(progress?.contractTemple?.current || 0);
+  if (current >= 0.4) return "0.4 件以上已進入強回饋區，成交神殿會更有感。";
+  if (current > 0) return "0.1 件也算高價值成果，會累積成交神殿回饋。";
+  return "委託、見面談、成件都會推進成交神殿，不只看整件成交。";
+}
+
 function renderProgressDashboard() {
   const target = document.getElementById("progressDashboard");
   if (!target) return;
   const progress = state.progress || buildProgressSnapshot(state.metrics);
-  const eEffectiveMilestone = progress.main.effective >= 4 ? "4/4 已達標" : progress.main.effective >= 3 ? "3/4 接近達標" : `${formatMetricValue(progress.main.effective)}/4 累積中`;
+  const fourPlus = progress.fourPlus || {
+    current: progress.main?.effective || 0,
+    target: 4,
+    extra: Math.max(0, normalizeMetricValue((progress.main?.effective || 0) - 4)),
+    gap: Math.max(0, normalizeMetricValue(4 - (progress.main?.effective || 0))),
+    done: (progress.main?.effective || 0) >= 4,
+  };
+  const eEffectiveMilestone = fourPlus.done
+    ? `日均 4+n 已啟動，n=${formatMetricValue(fourPlus.extra)}`
+    : `日均 E ${formatMetricValue(fourPlus.current)}/${formatMetricValue(fourPlus.target)}，還差 ${formatMetricValue(fourPlus.gap || 0)}`;
   const dreamClass = progress.main.dreamDone ? " is-celebration" : "";
+  const fourPercent = progressPercent(fourPlus.current, fourPlus.target);
   const highPercent = progressPercent(progress.highValue.current, progress.highValue.target);
   const monthPercent = progressPercent(progress.monthlyMission.current, progress.monthlyMission.target);
   const contractSources = progress.contractTemple.sources || {};
@@ -3540,7 +5315,7 @@ function renderProgressDashboard() {
 
   target.innerHTML = `
     <article class="progress-hero-card${dreamClass}">
-      <span class="summon-kicker">${escapeHtml(progress.main.label)}</span>
+      <span class="summon-kicker">行程合計：社區服務＋拜訪＋回報＋帶看</span>
       <strong>${formatMetricValue(progress.main.effective)} / ${formatMetricValue(progress.main.total)}</strong>
       <p>有效 / 全部組數。${escapeHtml(eEffectiveMilestone)}</p>
       ${progress.main.dreamDone ? `<span class="celebration-pill">E 全部達 ${formatMetricValue(progress.main.total)}，夢幻高標！</span>` : `<span class="soft-pill">E 全部 6 是爆發慶祝，不是每日壓力</span>`}
@@ -3557,48 +5332,55 @@ function renderProgressDashboard() {
       `).join("")}
     </div>
     <article class="progress-card">
-      <div class="team-topline"><strong>${escapeHtml(progress.highValue.label)}</strong><span>${formatMetricValue(progress.highValue.current)} / >${progress.highValue.target}</span></div>
+      <div class="team-topline"><strong>日均 4+n 進度</strong><span>${formatMetricValue(fourPlus.current)} / ${formatMetricValue(fourPlus.target)}${fourPlus.extra > 0 ? ` + ${formatMetricValue(fourPlus.extra)}` : ""}</span></div>
+      <div class="bar"><span style="width:${fourPercent}%"></span></div>
+      <p>${fourPlus.done ? "日均 E 已達 4 以上，接下來每一點 n 都要有獎勵刺激。" : `目標不是累積 4，是日均 E 達 4；目前還差 ${formatMetricValue(fourPlus.gap || 0)}。`}</p>
+    </article>
+    <article class="progress-card">
+      <div class="team-topline"><strong>高價值行為（拜訪＋回報＋帶看）</strong><span>${formatMetricValue(progress.highValue.current)} / >${progress.highValue.target}</span></div>
       <div class="bar"><span style="width:${highPercent}%"></span></div>
-      <p>${progress.highValue.done ? "高價值行為已點亮。" : "最想推動的是 B+C+D 有效組數。"}</p>
+      <p>${progress.highValue.done ? "高價值行為已點亮。" : "最想推動的是拜訪、回報、帶看有效組數。"}</p>
     </article>
     <article class="progress-card">
       <div class="team-topline"><strong>${escapeHtml(progress.phoneSignal.label)}</strong><span>${formatMetricValue(progress.phoneSignal.calls)} 通</span></div>
-      <p>${escapeHtml(phoneSignal)}。電話是加成信號，不蓋過 B+C+D 有效。</p>
+      <p>${escapeHtml(phoneSignal)}。電話是加成信號，不蓋過行程有效進度。</p>
     </article>
     <article class="progress-card">
-      <div class="team-topline"><strong>${escapeHtml(progress.monthlyMission.label)}</strong><span>${formatMetricValue(progress.monthlyMission.current)} / ${progress.monthlyMission.target}</span></div>
+      <div class="team-topline"><strong>月任務：雙量行為 開發＋帶看</strong><span>${formatMetricValue(progress.monthlyMission.current)} / ${progress.monthlyMission.target}</span></div>
       <div class="bar"><span style="width:${monthPercent}%"></span></div>
       <p>月任務只看長期累積，不拆成每日壓力。</p>
     </article>
     <article class="progress-card">
       <div class="team-topline"><strong>${escapeHtml(progress.contractTemple.label)}</strong><span>${formatMetricValue(progress.contractTemple.current)}</span></div>
       <p>${escapeHtml(contractLine)}</p>
+      <p>${escapeHtml(contractTempleProgressCue(progress))}</p>
       <p class="small-text">${escapeHtml(progress.contractTemple.note)}</p>
     </article>
     <article class="progress-card">
       <div class="team-topline"><strong>已亮起抽卡項目</strong><span>${totalTickets()} 次</span></div>
       <p>${escapeHtml(unlockLine)}</p>
-      <p class="small-text">抽卡倍率與精確掉落率待後端設定。</p>
+      <p class="small-text">同仁端只顯示本月卡池節奏，不公開精確機率與內建保底。</p>
     </article>
   `;
 }
 
 function renderMetrics() {
-  const employeeMetrics = [
-    ["development", "B 開發"],
-    ["negotiation", "C 有效信號"],
-    ["showing", "D 帶看"],
-    ["calls", "電話信號"],
-    ["listing", "委託"],
-    ["meeting", "見面談"],
-    ["contract", "簽約"],
-  ];
-  document.getElementById("metricsGrid").innerHTML = employeeMetrics.map(([key, label]) => `
-    <div class="metric-tile">
-      <strong>${formatMetricValue(state.metrics[key] || 0)}</strong>
-      <span>${label}</span>
-    </div>
-  `).join("");
+  const target = document.getElementById("metricsGrid");
+  if (!target) return;
+  const metrics = normalizeGameMetrics(state.progress?.sourceMetrics || state.metrics || {});
+  const items = [...SPIRIT_FOOD_ACTIVITY_ITEMS, ...SPIRIT_FOOD_RESULT_ITEMS];
+  target.innerHTML = items.map((item) => {
+    const value = foodItemValue(item, metrics);
+    return `
+      <article class="metric-tile metric-food-tile">
+        <div class="team-topline">
+          <span>${escapeHtml(item.label)}</span>
+          <strong>${formatMetricValue(value)}${escapeHtml(item.unit)}</strong>
+        </div>
+        <p>${escapeHtml(foodHintText(item, value))}</p>
+      </article>
+    `;
+  }).join("");
 }
 
 function renderPetWish() {
@@ -3643,21 +5425,28 @@ function renderDailyQuests() {
 function renderRewards() {
   const rewards = state.lastRewards;
   const rewardItems = [
-    ["經驗", `+${rewards.exp || 0}`],
-    ["一般券", `+${rewards.general || 0}`],
-    ["成果券", `+${rewards.result || 0}`],
-    ["簽約核心", `+${rewards.materials?.contract_core || 0}`],
+    ["經驗", Number(rewards.exp || 0), "+"],
+    ["一般券", Number(rewards.general || 0), "+"],
+    ["成果券", Number(rewards.result || 0), "+"],
+    ["簽約核心", Number(rewards.materials?.contract_core || 0), "+"],
   ];
-  if (rewards.wish) rewardItems.push(["心願", "完成"]);
-  if (rewards.streakReward) rewardItems.push(["連續", `${rewards.streakReward.count}天`]);
-  if (rewards.materialReport?.gains?.length) rewardItems.push(["素材", `${rewards.materialReport.gains.length} 種`]);
-  if (rewards.petGrowth) rewardItems.push(["成長", `Lv.${rewards.petGrowth.toLevel}`]);
-  document.getElementById("rewardStrip").innerHTML = rewardItems.map(([label, value]) => `
-    <div class="reward-item">
-      <strong>${value}</strong>
+  if (rewards.wish) rewardItems.push(["心願", "完成", ""]);
+  if (rewards.streakReward) rewardItems.push(["連續", `${rewards.streakReward.count}天`, ""]);
+  if (rewards.materialReport?.gains?.length) rewardItems.push(["素材", `${rewards.materialReport.gains.length} 種`, ""]);
+  if (rewards.petGrowth) rewardItems.push(["成長", `Lv.${rewards.petGrowth.toLevel}`, ""]);
+  const target = document.getElementById("rewardStrip");
+  if (!target) return;
+  target.innerHTML = rewardItems.map(([label, value, prefix]) => {
+    const numeric = typeof value === "number";
+    const shownValue = numeric ? `${prefix || ""}${value}` : value;
+    return `
+    <div class="reward-item ${numeric && value > 0 ? "is-gain" : "is-idle"}">
+      <strong ${numeric ? `data-count-to="${value}" data-count-prefix="${escapeHtml(prefix || "")}"` : ""}>${escapeHtml(shownValue)}</strong>
       <span>${label}</span>
     </div>
-  `).join("");
+  `;
+  }).join("");
+  animateCountUps(target);
 }
 
 function todayAchievements() {
@@ -3696,9 +5485,12 @@ function renderRewardAction() {
   if (!target) return;
   const tickets = totalTickets();
   const rewards = state.lastRewards;
-  const settlementRewards = state.dailySettlements?.[todayKey()]?.rewards || null;
-  const nextStep = buildRewardNextStep(rewards.blocked ? settlementRewards || rewards : rewards);
+  const settlement = state.dailySettlements?.[todayKey()] || null;
+  const settlementRewards = settlement?.rewards || null;
+  const activeRewards = rewards.blocked ? settlementRewards || rewards : rewards;
+  const nextStep = buildRewardNextStep(activeRewards);
   const nextStepUi = rewardNextStepMarkup(nextStep);
+  const loopCard = buildSettlementLoopCard(activeRewards, settlement);
   const shareButton = hasSettledToday()
     ? `
       <button class="secondary-button" type="button" data-share-daily="1">分享今日</button>
@@ -3713,6 +5505,7 @@ function renderRewardAction() {
           <span>目前沒有新增差額，所以不重複加券或素材。</span>
           ${nextStepUi.text}
         </div>
+        ${loopCard}
         <div class="reward-action-buttons">
           ${nextStepUi.button}
           ${shareButton}
@@ -3729,8 +5522,9 @@ function renderRewardAction() {
         <span>${tickets > 0 ? "把今天的券換成新夥伴。" : "完成今日推進目標後會累積抽卡券。"}</span>
         ${nextStepUi.text}
       </div>
+      ${loopCard}
       <div class="reward-action-buttons">
-        <button class="primary-button" type="button" data-view="gacha" ${tickets <= 0 ? "disabled" : ""}>去抽卡</button>
+        <button class="${tickets > 0 ? "primary-button" : "secondary-button unlock-button"}" type="button" ${tickets > 0 ? 'data-view="gacha"' : 'data-unlock-pool="general"'}>${tickets > 0 ? "去抽卡" : "看解鎖進度"}</button>
         ${nextStepUi.button}
         ${shareButton}
         <span id="dailyShareStatus" class="small-text"></span>
@@ -3739,32 +5533,74 @@ function renderRewardAction() {
   `;
 }
 
+function buildPoolInlineDrawResult(pool) {
+  const drawResult = state.history.find((item) => item.type === "draw");
+  if (!drawResult || drawResult.poolKey !== pool.key) return "";
+  const pet = getPet(drawResult.petId);
+  if (!pet) return "";
+  const owned = getOwned(pet.pet_id);
+  const tone = drawOutcomeTone(drawResult, pet);
+  const fragmentProgress = drawFragmentProgressText(drawResult, pet, owned);
+  const outcome = drawOutcomeLabel(drawResult, pet);
+  return `
+    <section class="pool-inline-result draw-tone-${escapeHtml(tone)}" aria-live="polite">
+      <span class="summon-kicker">剛剛抽到</span>
+      <div class="pool-inline-main">
+        <div class="mini-pet">${drawResultVisual(pet, owned, drawResult, "small")}</div>
+        <div>
+          <strong>${escapeHtml(pet.name)}</strong>
+          <span class="rarity-badge rarity-${pet.rarity}">${escapeHtml(pet.rarity)}</span>
+          <span class="collection-badge is-ready">${escapeHtml(outcome)}</span>
+        </div>
+      </div>
+      <p>${escapeHtml(drawResultSummaryText(drawResult, pet))}</p>
+      ${fragmentProgress ? `<p class="pool-inline-fragment">${escapeHtml(fragmentProgress)}</p>` : ""}
+    </section>
+  `;
+}
+
 function renderPools() {
-  document.getElementById("ticketSummary").textContent = `券 ${totalTickets()}`;
+  const total = totalTickets();
+  document.getElementById("ticketSummary").textContent = total > 0 ? `券 ${total}` : "快解鎖";
   document.getElementById("poolGrid").innerHTML = [...POOLS].sort((left, right) => poolPriority(right) - poolPriority(left)).map((pool) => {
     const candidates = poolCandidates(pool);
     const unlocked = poolUnlocked(pool);
-    const ready = unlocked && Number(state.tickets[pool.key] || 0) > 0 && candidates.length > 0;
+    const tickets = Number(state.tickets[pool.key] || 0);
+    const ready = unlocked && tickets > 0 && candidates.length > 0;
+    const progress = nextTicketProgress(pool.key, state.metrics);
+    const ticketLabelText = tickets > 0 ? `${tickets} 張` : progress.label;
+    const canGuide = !ready && candidates.length > 0;
     return `
-      <article class="pool-card ${unlocked ? "" : "is-locked"} ${ready ? "is-ready" : ""}">
+      <article class="pool-card ${poolThemeClass(pool.key)} ${unlocked ? "" : "is-locked"} ${ready ? "is-ready" : "is-unlockable"}">
         <div class="team-topline">
           <h3>${pool.name}</h3>
-          <span>${state.tickets[pool.key] || 0} 張</span>
+          <span>${escapeHtml(ticketLabelText)}</span>
         </div>
-        <p class="small-text">${pool.source}</p>
+        <p class="pool-hook">${escapeHtml(poolHookText(pool.key))}</p>
         <p class="assist-line">${escapeHtml(poolExperienceCue(pool, candidates, unlocked))}</p>
+        ${ready ? "" : `
+          <div class="pool-unlock-progress">
+            <div class="mini-progress"><span style="width:${progress.percent}%"></span></div>
+            <small>${escapeHtml(progress.unlockText)}</small>
+          </div>
+        `}
         <div class="pool-meta">
           ${rarityDisplayText(pool)}
           <span class="soft-pill">${candidates.length} 張候選卡</span>
+          <span class="soft-pill">${escapeHtml(drawPacingCue(pool.key))}</span>
           <span class="soft-pill">${escapeHtml(activePetAssistText().replace("主寵助力：", ""))}</span>
         </div>
-        <button class="primary-button" type="button" data-draw="${pool.key}" ${state.tickets[pool.key] <= 0 || !unlocked || !candidates.length ? "disabled" : ""}>${escapeHtml(poolDrawButtonLabel(pool))}</button>
+        <button class="${ready ? "primary-button" : "secondary-button unlock-button"}" type="button" ${ready ? `data-draw="${pool.key}"` : `data-unlock-pool="${pool.key}"`} ${!ready && !canGuide ? "disabled" : ""}>${escapeHtml(ready ? poolDrawButtonLabel(pool) : poolUnlockButtonLabel(pool.key))}</button>
+        ${buildPoolInlineDrawResult(pool)}
       </article>
     `;
   }).join("");
 }
 
 function drawOutcomeTone(draw, pet) {
+  if (draw?.outcomeKind === "egg") return "shine";
+  if (draw?.outcomeKind === "essence" || draw?.outcomeKind === "essence_conversion") return "growth";
+  if (draw?.outcomeKind === "temple_blessing") return "rare";
   if (draw?.duplicate) return "duplicate";
   if (pet?.rarity === "SSR" || pet?.rarity === "UR") return "rare";
   if (pet?.rarity === "SR") return "shine";
@@ -3772,25 +5608,174 @@ function drawOutcomeTone(draw, pet) {
 }
 
 function drawOutcomeLabel(draw, pet) {
-  if (draw?.duplicate) return `重複轉碎片 +${rewardCount(draw.fragmentsAdded)}`;
+  if (draw?.outcomeKind === "egg") return `${eggLabel(pet)} +1`;
+  if (draw?.outcomeKind === "essence") return `${draw.essenceLabel || essenceLabelForStoryline(pet?.storyline_id)} ×${rewardCount(draw.essenceAmount || draw.resourceAmount || 0)}`;
+  if (draw?.outcomeKind === "essence_conversion") return `${draw.essenceLabel || essenceLabelForStoryline(pet?.storyline_id)} ×${rewardCount(draw.essenceAmount || 5)}`;
+  if (draw?.outcomeKind === "temple_blessing") return "神殿祝福 +1";
+  if (draw?.duplicate) return `${pet?.name || "寵物"}星魂 +${rewardCount(draw.fragmentsAdded)}`;
   if (pet?.rarity === "SSR" || pet?.rarity === "UR") return "稀有夥伴加入";
   return "新夥伴加入";
 }
 
+function drawResultSummaryText(draw, pet) {
+  if (draw?.outcomeKind === "egg") {
+    const currentEgg = eggCount(draw.eggPetId || pet?.pet_id);
+    const essence = essenceCount(pet?.storyline_id);
+    return `${eggLabel(pet)}已入袋，目前蛋 ${currentEgg} 顆、${essenceLabelForStoryline(pet?.storyline_id)} ${essence}/${HATCH_ESSENCE_COST}。`;
+  }
+  if (draw?.outcomeKind === "essence") {
+    return `這抽沒有寵物，但${draw.essenceLabel || essenceLabelForStoryline(pet?.storyline_id)} +${rewardCount(draw.essenceAmount || 0)} 已入袋，離孵化更近。`;
+  }
+  if (draw?.outcomeKind === "essence_conversion") {
+    return `${pet?.name || "寵物"}已滿星，重複轉為${draw.essenceLabel || essenceLabelForStoryline(pet?.storyline_id)}。`;
+  }
+  if (draw?.outcomeKind === "temple_blessing") {
+    return "成交神殿滿星重複已化成神殿祝福，未來可指定換蛋或精華。";
+  }
+  if (draw?.duplicate) return `${pet?.name || "寵物"}星魂 +${rewardCount(draw.fragmentsAdded)}，升星更近。`;
+  return "新夥伴加入卡片庫。";
+}
+
+function hatchProgressForDraw(draw, pet) {
+  if (!pet || !["egg", "essence"].includes(draw?.outcomeKind)) return null;
+  const essence = essenceCount(pet.storyline_id);
+  const progress = Math.min(HATCH_ESSENCE_COST, essence);
+  const gap = Math.max(0, HATCH_ESSENCE_COST - essence);
+  const storylineEggs = PETS
+    .filter((item) => item.storyline_id === pet.storyline_id && eggCount(item.pet_id) > 0 && !getOwned(item.pet_id))
+    .map((item) => ({ pet: item, eggs: eggCount(item.pet_id) }));
+  const target = storylineEggs[0]?.pet || pet;
+  const hasEgg = storylineEggs.length > 0 || draw.outcomeKind === "egg";
+  const title = hasEgg
+    ? `${eggLabel(target)}孵化進度`
+    : `${fallbackStorylineName(pet.storyline_id)}孵化能量`;
+  const detail = gap <= 0 && hasEgg
+    ? `${essenceLabelForStoryline(pet.storyline_id)}已足，現在可孵化。`
+    : hasEgg
+      ? `已有蛋，還差 ${gap} 個${essenceLabelForStoryline(pet.storyline_id)}可孵化。`
+      : `先累積 ${essenceLabelForStoryline(pet.storyline_id)} ${progress}/${HATCH_ESSENCE_COST}，抽到同線寵物蛋就能孵化。`;
+  return {
+    title,
+    detail,
+    progress,
+    target: HATCH_ESSENCE_COST,
+    percent: progressPercent(progress, HATCH_ESSENCE_COST),
+  };
+}
+
+function drawHatchProgressMarkup(draw, pet) {
+  const progress = hatchProgressForDraw(draw, pet);
+  if (!progress) return "";
+  return `
+    <div class="draw-hatch-progress">
+      <div class="team-topline">
+        <strong>${escapeHtml(progress.title)}</strong>
+        <span>${progress.progress}/${progress.target}</span>
+      </div>
+      <div class="bar"><span style="width:${progress.percent}%"></span></div>
+      <p>${escapeHtml(progress.detail)}</p>
+    </div>
+  `;
+}
+
+function drawFragmentProgressText(draw, pet, owned) {
+  if (!pet) return "";
+  if (draw?.outcomeKind === "egg") {
+    const essence = essenceCount(pet.storyline_id);
+    const gap = Math.max(0, HATCH_ESSENCE_COST - essence);
+    return gap <= 0
+      ? `${eggLabel(pet)}可以孵化了，到卡片庫把牠叫出來。`
+      : `還差 ${gap} 個${essenceLabelForStoryline(pet.storyline_id)}可孵化 ${pet.name}。`;
+  }
+  if (draw?.outcomeKind === "essence") {
+    return `目前${essenceLabelForStoryline(pet.storyline_id)} ${essenceCount(pet.storyline_id)}/${HATCH_ESSENCE_COST}，搭配同線寵物蛋可孵化。`;
+  }
+  if (!owned) return "";
+  if (draw?.outcomeKind === "essence_conversion") return `${pet.name} 已達 5 星，這次重複已轉成同線精華。`;
+  if (draw?.outcomeKind === "temple_blessing") return "成交神殿滿星重複保留為神殿祝福，不浪費。";
+  if (owned.star >= 5) return `${pet.name} 已達 5 星，後續重複會轉成同故事線精華。`;
+  const nextStar = owned.star + 1;
+  const cost = starCost(nextStar);
+  const current = rewardCount(owned.duplicate_fragments);
+  const gap = Math.max(0, cost - current);
+  if (gap <= 0) return `星魂 ${current}/${cost} 已滿，可以把 ${pet.name} 升到 ${nextStar} 星。`;
+  if (draw?.duplicate) return `${pet.name}星魂 +${rewardCount(draw.fragmentsAdded)}，目前 ${current}/${cost}，再 ${gap} 個星魂升 ${nextStar} 星。`;
+  return `重複寵物會變星魂；${pet.name} 目前 ${current}/${cost}，再 ${gap} 個星魂升 ${nextStar} 星。`;
+}
+
+function drawMomentumCue(action, pet, owned) {
+  if (action?.kind === "hatch") return `${pet.name} 的蛋和精華都夠了，先孵化拿到新夥伴。`;
+  if (action?.kind === "star") return `星魂已滿，先升星，${pet.name} 的養成會立刻有感。`;
+  if (action?.kind === "awaken") return `覺醒條件已到，成果素材可以轉成新的戰力。`;
+  if (action?.kind === "draw") return `還有 ${totalTickets()} 次抽卡，先把手上的券抽完。`;
+  if (action?.kind === "mission") return `抽完先回工作閉環：${buildPilotMission(state.metrics).detail}`;
+  const quests = buildDailyQuests(state.metrics);
+  const nextQuest = quests
+    .filter((quest) => !quest.done)
+    .sort((a, b) => (a.target - a.current) - (b.target - b.current))[0];
+  if (nextQuest) return `${nextQuest.message}，補完再回來抽。`;
+  if (owned) return `${pet.name} 今天已加入隊伍，回今日推進看下一個養成缺口。`;
+  return "回今日推進補一個最短挑戰，再把新的券帶回來抽。";
+}
+
+function drawMonthlyPacingText(draw) {
+  const cue = drawPacingCue(draw?.poolKey);
+  const goal = INTERNAL_DRAW_PACING_CONFIG.monthlyGoal;
+  if (draw?.outcomeKind === "pet" && !draw?.duplicate) return `月養成節奏：這次是大成果；接下來用蛋、精華與星魂把主寵養起來。`;
+  if (draw?.outcomeKind === "egg") return `月養成節奏：寵物蛋是中獎節點；補同線精華就能孵化。`;
+  if (draw?.outcomeKind === "essence") return `月養成節奏：這次是小進度；${cue}`;
+  if (draw?.duplicate) return `月養成節奏：重複不是浪費，星魂會推升星。`;
+  return `月養成節奏：${goal}`;
+}
+
+function todayDrawBattleText(draw = state.history.find((item) => item.type === "draw")) {
+  const today = todayKey();
+  const draws = (state.history || []).filter((item) => item.type === "draw" && todayKey(new Date(item.at || Date.now())) === today);
+  if (!draws.length) return "";
+  const newCount = draws.filter((item) => item.outcomeKind === "pet" && !item.duplicate).length;
+  const eggCountToday = draws.filter((item) => item.outcomeKind === "egg").length;
+  const duplicateCount = draws.filter((item) => item.outcomeKind === "star_soul").length;
+  const fragments = draws.reduce((sum, item) => sum + rewardCount(item.fragmentsAdded || 0), 0);
+  const essences = draws.reduce((sum, item) => sum + rewardCount(item.essenceAmount || 0), 0);
+  const pet = draw ? getPet(draw.petId) : null;
+  const owned = pet ? getOwned(pet.pet_id) : null;
+  const nextCost = owned && owned.star < 5 ? starCost(owned.star + 1) : 0;
+  const gap = owned && owned.star < 5 ? Math.max(0, nextCost - owned.duplicate_fragments) : 0;
+  const progress = pet && owned && owned.star < 5
+    ? `${pet.name} 距離升 ${owned.star + 1} 星還差 ${gap} 個星魂`
+    : pet && owned
+      ? `${pet.name} 已達 5 星，重複會轉同線精華`
+      : "卡片庫已更新";
+  return `今天抽卡戰果：新寵 ${newCount}、蛋 ${eggCountToday}、星魂 +${fragments}、精華 +${essences}；${progress}。`;
+}
+
+function drawWorkFollowupText() {
+  const mission = buildPilotMission(state.metrics);
+  return `下一步：${mission.title}，${mission.detail}`;
+}
+
 function drawNextAction(draw, pet, owned) {
+  if (draw?.outcomeKind === "egg" && pet && canHatchPet(pet.pet_id)) {
+    return { kind: "hatch", label: "去孵化", petId: pet.pet_id };
+  }
   if (draw?.duplicate && owned && owned.star < 5 && owned.duplicate_fragments >= starCost(owned.star + 1)) {
     return { kind: "star", label: "去升星", petId: pet.pet_id };
   }
   if (pet && owned && canAwaken(pet, owned)) return { kind: "awaken", label: "去覺醒", petId: pet.pet_id };
   if (draw?.poolKey && Number(state.tickets?.[draw.poolKey] || 0) > 0) return { kind: "draw", label: "再抽一次", poolKey: draw.poolKey };
-  return { kind: "view", label: "看卡片庫", view: "collection" };
+  const nextReadyPool = POOLS.find((pool) => Number(state.tickets?.[pool.key] || 0) > 0);
+  if (nextReadyPool) return { kind: "draw", label: "再抽一次", poolKey: nextReadyPool.key };
+  const mission = buildPilotMission(state.metrics);
+  return { kind: "mission", label: mission.buttonLabel, missionKey: mission.key, view: "today" };
 }
 
 function drawNextActionMarkup(action) {
   if (!action) return "";
+  if (action.kind === "hatch") return `<button class="primary-button" type="button" data-hatch="${escapeHtml(action.petId)}">${escapeHtml(action.label)}</button>`;
   if (action.kind === "star") return `<button class="primary-button" type="button" data-star="${escapeHtml(action.petId)}">${escapeHtml(action.label)}</button>`;
   if (action.kind === "awaken") return `<button class="primary-button" type="button" data-awaken="${escapeHtml(action.petId)}">${escapeHtml(action.label)}</button>`;
   if (action.kind === "draw") return `<button class="primary-button" type="button" data-draw="${escapeHtml(action.poolKey)}">${escapeHtml(action.label)}</button>`;
+  if (action.kind === "mission") return `<button class="primary-button" type="button" data-pilot-mission="${escapeHtml(action.missionKey || "home")}">${escapeHtml(action.label)}</button>`;
   return `<button class="primary-button" type="button" data-view="${escapeHtml(action.view || "collection")}">${escapeHtml(action.label)}</button>`;
 }
 
@@ -3806,6 +5791,13 @@ function renderDrawResult() {
   const owned = pet ? getOwned(pet.pet_id) : null;
   const tone = drawOutcomeTone(lastDraw, pet);
   const nextAction = drawNextAction(lastDraw, pet, owned);
+  const fragmentProgress = drawFragmentProgressText(lastDraw, pet, owned);
+  const hatchProgress = drawHatchProgressMarkup(lastDraw, pet);
+  const resultSummary = drawResultSummaryText(lastDraw, pet);
+  const momentumCue = drawMomentumCue(nextAction, pet, owned);
+  const monthlyPacing = drawMonthlyPacingText(lastDraw);
+  const battleText = todayDrawBattleText(lastDraw);
+  const workFollowup = drawWorkFollowupText();
   target.innerHTML = `
     <article class="draw-result-card draw-tone-${escapeHtml(tone)}">
       <div class="mini-pet">${petVisual(pet, getOwned(pet.pet_id), "small")}</div>
@@ -3818,6 +5810,13 @@ function renderDrawResult() {
         </div>
         ${flavor ? `<p class="pet-flavor">「${escapeHtml(flavor)}」</p>` : ""}
         <p class="small-text">${lastDraw.text}</p>
+        ${resultSummary ? `<p class="draw-result-summary">${escapeHtml(resultSummary)}</p>` : ""}
+        ${fragmentProgress ? `<p class="draw-fragment-line">${escapeHtml(fragmentProgress)}</p>` : ""}
+        ${hatchProgress}
+        <p class="draw-pacing-cue">${escapeHtml(monthlyPacing)}</p>
+        ${battleText ? `<p class="draw-battle-line">${escapeHtml(battleText)}</p>` : ""}
+        <p class="draw-work-followup">${escapeHtml(workFollowup)}</p>
+        <p class="draw-return-cue">${escapeHtml(momentumCue)}</p>
         ${lastDraw.assistText ? `<p class="assist-line">${escapeHtml(lastDraw.assistText)}</p>` : ""}
         <div class="draw-share-row">
           ${drawNextActionMarkup(nextAction)}
@@ -3841,8 +5840,14 @@ function buildDrawShareText(draw = state.history.find((item) => item.type === "d
   const pet = getPet(draw.petId);
   const petText = pet ? `${pet.rarity} ${pet.name}` : "新夥伴";
   const subtitle = pet?.line_subtitle || pet?.card_effect_summary || "行程養寵物，成果拿覺醒素材。";
-  const outcome = draw.duplicate
-    ? `重複卡轉成 ${rewardCount(draw.fragmentsAdded)} 碎片，下一次升星又近一點。`
+  const outcome = draw.outcomeKind === "egg"
+    ? `拿到 ${eggLabel(pet)}，孵化又近一步。`
+    : draw.outcomeKind === "essence"
+      ? `拿到 ${draw.essenceLabel || essenceLabelForStoryline(pet?.storyline_id)} ×${rewardCount(draw.essenceAmount || 0)}。`
+      : draw.outcomeKind === "temple_blessing"
+        ? "成交神殿祝福已入袋。"
+        : draw.duplicate
+    ? `重複寵物轉成 ${rewardCount(draw.fragmentsAdded)} 星魂，下一次升星又近一點。`
     : pet?.rarity === "SSR"
       ? "成交神殿有回應，今天這抽有感。"
       : "新夥伴加入卡片庫。";
@@ -3895,7 +5900,7 @@ function metricSummaryText(metrics = state.metrics) {
   const progress = state.progress || buildProgressSnapshot(metrics);
   return [
     `E ${formatMetricValue(progress.main.effective)} / ${formatMetricValue(progress.main.total)}`,
-    `B+C+D 有效 ${formatMetricValue(progress.highValue.current)}`,
+    `拜訪＋回報＋銷售有效 ${formatMetricValue(progress.highValue.current)}`,
     `電話信號 ${formatMetricValue(progress.phoneSignal.calls)}`,
     `成交神殿 ${formatMetricValue(progress.contractTemple.current)}`,
   ].join("、");
@@ -4029,6 +6034,27 @@ function collectionFragmentTotal() {
   return Object.values(state.collection || {}).reduce((sum, owned) => sum + Number(owned?.duplicate_fragments || 0), 0);
 }
 
+function eggEntries() {
+  return Object.entries(state.eggs || {})
+    .map(([petId, amount]) => ({ pet: getPet(petId), amount: rewardCount(amount) }))
+    .filter((item) => item.pet && item.amount > 0);
+}
+
+function essenceEntries() {
+  const storylines = getStorylines();
+  return Object.entries(state.essences || {})
+    .map(([key, amount]) => {
+      const resourceKey = key.replace(/_essence$/, "");
+      const storyline = storylines.find((item) => storylineResourceKey(item.storyline_id) === resourceKey);
+      return {
+        key,
+        label: STORYLINE_ESSENCE_LABELS[resourceKey] || `${storyline?.name || resourceKey}精華`,
+        amount: rewardCount(amount),
+      };
+    })
+    .filter((item) => item.amount > 0);
+}
+
 function renderInventoryBag() {
   const summary = document.getElementById("bagSummary");
   const grid = document.getElementById("bagGrid");
@@ -4038,8 +6064,11 @@ function renderInventoryBag() {
   const materials = materialGainEntries(state.materials || {});
   const ownedCount = ownedCurrentPetCount();
   const fragmentTotal = collectionFragmentTotal();
+  const eggs = eggEntries();
+  const essences = essenceEntries();
+  const templeBlessing = rewardCount(state.specialResources?.templeBlessing || 0);
   const actionable = findFirstActionableCollection();
-  if (summary) summary.textContent = `${totalTickets()} 券 · ${materials.length} 種素材`;
+  if (summary) summary.textContent = `${totalTickets()} 券 · ${eggs.length} 種蛋 · ${essences.length} 種精華`;
   const sections = [
     {
       title: "今天先檢查",
@@ -4050,20 +6079,26 @@ function renderInventoryBag() {
     {
       title: "現在可用",
       detail: actionable ? actionable.text : (tickets.length ? compactTicketText(tickets) : "暫無立即操作"),
-      meta: actionable ? "先把碎片或素材變成寵物進度。" : "有券就抽，有素材就整理卡片庫。",
+      meta: actionable ? "先把星魂、蛋或素材變成寵物進度。" : "有券就抽，有蛋、精華或素材就整理卡片庫。",
       tone: actionable ? "hot" : "growth",
     },
     {
-      title: "長期累積",
-      detail: materials.length ? materials.slice(0, 4).map(([key, value]) => `${materialLabel(key)} ${value}`).join(" · ") : "目前沒有素材",
-      meta: "委託、見面談、簽約等真實成果推進覺醒與成熟合成。",
+      title: "孵化資源",
+      detail: eggs.length ? eggs.slice(0, 3).map(({ pet, amount }) => `${eggLabel(pet)} ${amount}`).join(" · ") : "目前沒有寵物蛋",
+      meta: essences.length ? essences.slice(0, 3).map((item) => `${item.label} ${item.amount}`).join(" · ") : "抽到精華後，可搭配同線寵物蛋孵化。",
       tone: "soft",
     },
     {
       title: "收藏進度",
-      detail: `${ownedCount} / ${PETS.length} 種 · 碎片 ${fragmentTotal}`,
-      meta: "重複卡會轉成碎片，碎片可以升星與合成。",
+      detail: `${ownedCount} / ${PETS.length} 種 · 星魂 ${fragmentTotal}`,
+      meta: templeBlessing ? `神殿祝福 ${templeBlessing} 個，可保留未來指定換蛋或精華。` : "重複寵物會轉成星魂，星魂可以升星。",
       tone: "growth",
+    },
+    {
+      title: "覺醒素材",
+      detail: materials.length ? materials.slice(0, 4).map(([key, value]) => `${materialLabel(key)} ${value}`).join(" · ") : "目前沒有素材",
+      meta: "委託、見面談、簽約等真實成果推進覺醒與成熟合成。",
+      tone: "soft",
     },
   ];
   grid.innerHTML = sections.map((section) => `
@@ -4077,8 +6112,8 @@ function renderInventoryBag() {
     resetCard.innerHTML = `
       <span class="summon-kicker">全部重置規則</span>
       <strong>同仁自己選，選了就全部清空</strong>
-      <p>卡片庫、寵物、碎片、素材、抽卡紀錄、每日免費抽、月榜第一與加碼都會消失。</p>
-      <p>唯一保留的是 A/B/C/D 行程與成果項重新計算出的抽卡點數。</p>
+      <p>卡片庫、寵物、星魂、蛋、精華、素材、抽卡紀錄、每日免費抽、月榜第一與加碼都會消失。</p>
+      <p>唯一保留的是行程與成果項重新計算出的抽卡點數。</p>
     `;
   }
 }
@@ -4106,8 +6141,8 @@ function renderCollectionActionStrip() {
     target.innerHTML = `
       <article class="collection-action-card">
         <span class="summon-kicker">卡片庫下一步</span>
-        <strong>${ownedCount ? "先累積碎片與素材" : "先抽到第一批夥伴"}</strong>
-        <p>${ownedCount ? "抽到重複卡會變碎片；委託、見面談、簽約會讓覺醒素材增加。" : "去抽卡後，這裡會優先顯示可升星、可覺醒的卡。"}</p>
+        <strong>${ownedCount ? "先累積蛋、精華與星魂" : "先抽到第一批夥伴"}</strong>
+        <p>${ownedCount ? "抽到蛋與精華可以孵化；重複寵物會變星魂；成果素材推覺醒。" : "去抽卡後，這裡會優先顯示可孵化、可升星、可覺醒的卡。"}</p>
       </article>
     `;
     return;
@@ -4117,13 +6152,21 @@ function renderCollectionActionStrip() {
       <span class="summon-kicker">卡片庫下一步</span>
       <strong>${escapeHtml(action.text)}</strong>
       <p>目前最值得先處理的是 ${escapeHtml(action.pet.name)}，處理完再回來抽卡或看成果。</p>
-      <button class="primary-button" type="button" data-${action.type === "star" ? "star" : action.type === "awaken" ? "awaken" : action.type === "ultimate" ? "ultimate" : "view"}="${escapeHtml(action.type === "material-ready" ? "collection" : action.pet.pet_id)}">${escapeHtml(action.label)}</button>
+      <button class="primary-button" type="button" data-${action.type === "hatch" ? "hatch" : action.type === "star" ? "star" : action.type === "awaken" ? "awaken" : action.type === "ultimate" ? "ultimate" : "view"}="${escapeHtml(action.type === "material-ready" ? "collection" : action.pet.pet_id)}">${escapeHtml(action.label)}</button>
     </article>
   `;
 }
 
 function collectionActionState(pet, owned = getOwned(pet.pet_id)) {
-  if (!owned) return { badges: [], score: 0 };
+  if (!owned) {
+    const eggs = eggCount(pet.pet_id);
+    const essence = essenceCount(pet.storyline_id);
+    const hatchReady = canHatchPet(pet.pet_id);
+    const badges = [];
+    if (eggs) badges.push({ label: `${eggLabel(pet)} ${eggs}`, tone: hatchReady ? "ready" : "soft" });
+    if (hatchReady) badges.push({ label: "可孵化", tone: "ready" });
+    return { badges, score: (hatchReady ? 105 : 0) + (eggs ? 40 : 0) + Math.min(9, essence) };
+  }
   const nextCost = owned.star < 5 ? starCost(owned.star + 1) : 0;
   const canStar = owned.star < 5 && owned.duplicate_fragments >= nextCost;
   const awakenReady = canAwaken(pet, owned);
@@ -4138,7 +6181,7 @@ function collectionActionState(pet, owned = getOwned(pet.pet_id)) {
   const badges = [];
   if (pet.pet_id === state.activePetId) badges.push({ label: "主寵", tone: "focus" });
   if (canStar) badges.push({ label: "可升星", tone: "ready" });
-  else if (owned.star < 5 && fragmentGap > 0 && fragmentGap <= 3) badges.push({ label: "只差碎片", tone: "soft" });
+  else if (owned.star < 5 && fragmentGap > 0 && fragmentGap <= 3) badges.push({ label: "只差星魂", tone: "soft" });
   if (awakenReady) badges.push({ label: "可覺醒", tone: "ready" });
   else if (materialReady) badges.push({ label: "素材已足", tone: "soft" });
   else if (materialNearly) badges.push({ label: "素材快足", tone: "soft" });
@@ -4146,15 +6189,41 @@ function collectionActionState(pet, owned = getOwned(pet.pet_id)) {
   return {
     badges,
     score:
-      (pet.pet_id === state.activePetId ? 100 : 0) +
-      (awakenReady ? 80 : 0) +
-      (ultimateReady ? 70 : 0) +
-      (canStar ? 60 : 0) +
-      (materialReady ? 40 : 0) +
-      (materialNearly ? 30 : 0) +
-      (fragmentGap > 0 && fragmentGap <= 3 ? 20 : 0) +
+      (canStar ? 120 : 0) +
+      (awakenReady ? 110 : 0) +
+      (ultimateReady ? 100 : 0) +
+      (fragmentGap > 0 && fragmentGap <= 3 ? 80 : 0) +
+      (materialReady ? 70 : 0) +
+      (materialNearly ? 60 : 0) +
+      (pet.pet_id === state.activePetId ? 40 : 0) +
       (owned ? 10 : 0),
   };
+}
+
+function collectionWorkCue(pet, owned = getOwned(pet.pet_id)) {
+  if (!pet) return "";
+  if (!owned) {
+    const eggs = eggCount(pet.pet_id);
+    const essence = essenceCount(pet.storyline_id);
+    if (!eggs) return `抽到${eggLabel(pet)}後，再集 ${HATCH_ESSENCE_COST} 個${essenceLabelForStoryline(pet.storyline_id)}就能孵化。`;
+    const gap = Math.max(0, HATCH_ESSENCE_COST - essence);
+    return gap <= 0
+      ? `${eggLabel(pet)}與${essenceLabelForStoryline(pet.storyline_id)}都足夠，現在可孵化。`
+      : `${eggLabel(pet)}已入袋，還差 ${gap} 個${essenceLabelForStoryline(pet.storyline_id)}可孵化。`;
+  }
+  const nextCost = owned.star < 5 ? starCost(owned.star + 1) : 0;
+  if (owned.star < 5 && owned.duplicate_fragments >= nextCost) return `星魂已滿，先升星，${pet.name} 馬上變強。`;
+  if (canAwaken(pet, owned)) return `成果素材已到位，先覺醒，讓成果變成戰力。`;
+  const pool = POOLS.find((item) => item.storylineIds?.includes(pet.storyline_id));
+  const quest = buildDailyQuests(state.metrics)
+    .filter((item) => !item.done)
+    .sort((a, b) => (a.target - a.current) - (b.target - b.current))[0];
+  if (owned.star < 5 && nextCost) {
+    const gap = Math.max(0, nextCost - owned.duplicate_fragments);
+    return `${pool ? pool.name : "同名寵物"}可補星魂；還差 ${gap} 個星魂升 ${owned.star + 1} 星。`;
+  }
+  if (quest) return `${quest.message}，回今日推進補完再回來養牠。`;
+  return "今天行程養等級，成果素材推覺醒。";
 }
 
 function renderCollectionBadges(badges) {
@@ -4183,18 +6252,20 @@ function renderCollection() {
     const flavor = petFlavorText(pet);
     return `
       <article class="pet-card ${locked ? "is-locked" : ""}">
-        <div class="mini-pet">${petVisual(pet, owned, "small")}</div>
+        <div class="mini-pet">${petCollectionVisual(pet, owned, "small")}</div>
         <div class="pet-name-row">
           <h3>${pet.name}</h3>
           <span class="rarity-badge rarity-${pet.rarity}">${pet.rarity}</span>
         </div>
         ${renderCollectionBadges(action.badges)}
-        <p class="small-text">${locked ? "尚未取得" : `${currentForm(pet, owned)} · Lv.${owned.level} · ${owned.star}星 · 碎片 ${owned.duplicate_fragments}`}</p>
+        <p class="small-text">${locked ? `${eggCount(pet.pet_id) ? `${eggLabel(pet)} ${eggCount(pet.pet_id)} · ${essenceLabelForStoryline(pet.storyline_id)} ${essenceCount(pet.storyline_id)}/${HATCH_ESSENCE_COST}` : "尚未取得"}` : `${currentForm(pet, owned)} · Lv.${owned.level} · ${owned.star}星 · 星魂 ${owned.duplicate_fragments}`}</p>
+        <p class="collection-work-cue">${escapeHtml(collectionWorkCue(pet, owned))}</p>
         ${flavor ? `<p class="pet-flavor">「${escapeHtml(flavor)}」</p>` : ""}
         <p class="small-text">${escapeHtml(pet.card_effect_summary || "")}</p>
         <div class="pet-card-actions">
           <button class="secondary-button" type="button" data-active="${pet.pet_id}" ${locked ? "disabled" : ""}>設為夥伴</button>
-          <button class="secondary-button" type="button" data-star="${pet.pet_id}" ${!owned || owned.star >= 5 || owned.duplicate_fragments < nextCost ? "disabled" : ""}>升星 ${nextCost ? `-${nextCost}` : ""}</button>
+          <button class="secondary-button" type="button" data-hatch="${pet.pet_id}" ${canHatchPet(pet.pet_id) ? "" : "disabled"}>孵化</button>
+          <button class="secondary-button" type="button" data-star="${pet.pet_id}" ${!owned || owned.star >= 5 || owned.duplicate_fragments < nextCost ? "disabled" : ""}>升星 ${nextCost ? `-${nextCost}星魂` : ""}</button>
           <button class="secondary-button" type="button" data-awaken="${pet.pet_id}" ${canAwaken(pet, owned) ? "" : "disabled"}>覺醒</button>
           <button class="secondary-button" type="button" data-ultimate="${pet.pet_id}" ${canUltimate(pet, owned) ? "" : "disabled"}>究極合成</button>
         </div>
@@ -4281,6 +6352,63 @@ function managerLeaderboardRows() {
   );
 }
 
+function managerMonthlyTotals(rows = []) {
+  const list = Array.isArray(rows) ? rows : [];
+  const totals = {
+    employeeCount: list.length,
+    area: 0,
+    development: 0,
+    negotiation: 0,
+    showing: 0,
+    calls: 0,
+    momentum: 0,
+    listing: 0,
+    meeting: 0,
+    contract: 0,
+    offer: 0,
+    price: 0,
+    monthlyDevelopmentShowing: 0,
+  };
+  return list.reduce((summary, row) => {
+    summary.area += normalizeMetricValue(row.area);
+    summary.development += normalizeMetricValue(row.development);
+    summary.negotiation += normalizeMetricValue(row.negotiation);
+    summary.showing += normalizeMetricValue(row.showing);
+    summary.calls += normalizeMetricValue(row.calls);
+    summary.momentum += normalizeMetricValue(row.momentum);
+    summary.listing += normalizeMetricValue(row.listing);
+    summary.meeting += normalizeMetricValue(row.meeting);
+    summary.contract += normalizeMetricValue(row.contract);
+    summary.offer += normalizeMetricValue(row.offer);
+    summary.price += normalizeMetricValue(row.price);
+    summary.monthlyDevelopmentShowing += normalizeMetricValue(row.monthlyDevelopmentShowing);
+    return summary;
+  }, totals);
+}
+
+function managerMonthlyActivityText(rows = [], metrics = {}) {
+  const hasBreakdown = Array.isArray(rows) && rows.some((row) => (
+    ["area", "development", "negotiation", "showing", "momentum"].some((key) => {
+      const value = Number(row?.[key]);
+      return Number.isFinite(value) && value !== 0;
+    })
+  ));
+  if (hasBreakdown) {
+    return (
+      Number(metrics.area || 0) +
+      Number(metrics.development || 0) +
+      Number(metrics.negotiation || 0) +
+      Number(metrics.showing || 0) +
+      Number(metrics.momentum || 0)
+    );
+  }
+  return Number(metrics.monthlyDevelopmentShowing || 0);
+}
+
+function managerMonthlyResultText(metrics = {}) {
+  return Number(metrics.listing || 0) + Number(metrics.offer || 0) + Number(metrics.price || 0) + Number(metrics.meeting || 0) + Number(metrics.contract || 0);
+}
+
 function metricPairValue(metrics, key, side = "valid") {
   const value = metrics?.[key];
   if (isPlainObject(value)) return normalizeMetricValue(value[side] ?? value.valid ?? value.total ?? 0);
@@ -4353,11 +6481,11 @@ function renderManagerImportAudit() {
           <div class="audit-row audit-head" role="row">
             <span>人名</span>
             <span>員編</span>
-            <span>A 商圈</span>
-            <span>B 開發</span>
-            <span>C 議價</span>
-            <span>D 帶看</span>
-            <span>D 銷售</span>
+            <span>社區服務</span>
+            <span>拜訪</span>
+            <span>回報</span>
+            <span>帶看</span>
+            <span>銷售</span>
             <span>E 有效</span>
             <span>E 全部</span>
             <span>F 電話</span>
@@ -4404,7 +6532,7 @@ function renderManagerTemporaryTasks() {
       <p>第一版只讓店長開關任務，不寫死倍率；任務獎勵之後接後端設定。</p>
       <div class="manager-task-list">
         <div class="team-topline">
-          <span>B+C+D 有效缺口</span>
+          <span>高價值行為缺口</span>
           <span>${formatMetricValue(highValueRemaining)}</span>
         </div>
         <div class="team-topline">
@@ -4428,7 +6556,7 @@ function renderManagerLeaderboard() {
   target.innerHTML = `
     <article class="manager-card">
       <span class="summon-kicker">月榜排序</span>
-      <strong>目前匯入 ${rows.length} 位</strong>
+      <strong>本月同仁行程狀態：${rows.length} 位</strong>
       <div class="leaderboard-table" role="table" aria-label="店長月榜排序">
         <div class="leaderboard-row leaderboard-head" role="row">
           <span>名次</span>
@@ -4457,7 +6585,7 @@ function renderManagerDashboard() {
   const teamToggle = document.getElementById("teamMissionToggle");
   if (teamToggle) teamToggle.textContent = state.manager.teamMissionStarted ? "已開始" : "未開始";
   const bonusToggle = document.getElementById("bonusToggle");
-  if (bonusToggle) bonusToggle.textContent = state.manager.bonusEnabled ? "加碼待設定" : "未加碼";
+  if (bonusToggle) bonusToggle.textContent = state.manager.bonusEnabled ? "加碼規劃中" : "未加碼";
   const temporaryTaskToggle = document.getElementById("temporaryTaskToggle");
   if (temporaryTaskToggle) temporaryTaskToggle.textContent = state.manager.temporaryTaskStarted ? "已開啟" : "未開啟";
 
@@ -4469,14 +6597,21 @@ function renderManagerDashboard() {
   if (tracking) {
     const lastImport = state.manager.lastImport;
     const warnings = state.manager.warnings || [];
+    const leaderboardRows = managerLeaderboardRows();
+    const totals = managerMonthlyTotals(leaderboardRows);
+    const periodText = lastImport?.period || state.manager.cloudDashboard?.period || leaderboardRows[0]?.period || currentPeriodKey();
+    const hasRows = totals.employeeCount > 0;
+    const monthlyActivity = managerMonthlyActivityText(leaderboardRows, totals);
+    const monthlyResult = managerMonthlyResultText(totals);
     tracking.innerHTML = `
       <article class="manager-card">
-        <span class="summon-kicker">追蹤狀態</span>
-        <strong>${lastImport ? "已有匯入紀錄" : "尚未匯入資料"}</strong>
-        <p>${lastImport ? `${escapeHtml(lastImport.period)} · ${new Date(lastImport.at).toLocaleString("zh-TW")}` : "拖移每日報表後，這裡會顯示最近匯入狀態。"}</p>
+        <span class="summon-kicker">行程狀態</span>
+        <strong>${hasRows ? `${formatMetricValue(totals.employeeCount)} 位同仁本月行程資料` : "尚未有可顯示的行程資料"}</strong>
+        <p>${hasRows ? `${escapeHtml(periodText)} · ${lastImport ? new Date(lastImport.at).toLocaleString("zh-TW") : "已同步展示"}` : "拖移每日報表後，這裡會顯示各同仁這個月累積行程數據。"}</p>
         <div class="pool-meta">
-          <span class="soft-pill">團隊任務 ${state.manager.teamMissionStarted ? "開始" : "未開始"}</span>
-          <span class="soft-pill">加碼 ${state.manager.bonusEnabled ? "placeholder" : "關閉"}</span>
+          <span class="soft-pill">行程 ${formatMetricValue(monthlyActivity)}</span>
+          <span class="soft-pill">電話 ${formatMetricValue(totals.calls)}</span>
+          <span class="soft-pill">成果 ${formatMetricValue(monthlyResult)}</span>
         </div>
         ${warnings.length ? `<p class="small-text warning-text">${warnings.map(escapeHtml).join("、")}</p>` : `<p class="small-text">目前沒有匯入警告。</p>`}
       </article>
@@ -4522,7 +6657,7 @@ function renderCardGameBoard() {
       <div>
         <span class="summon-kicker">今日手牌</span>
         <strong>${escapeHtml(pet.name)} · ${escapeHtml(currentForm(pet, owned))}</strong>
-        <p>E ${formatMetricValue(progress.main.effective)} / ${formatMetricValue(progress.main.total)}，B+C+D 有效 ${formatMetricValue(progress.highValue.current)}。</p>
+        <p>E ${formatMetricValue(progress.main.effective)} / ${formatMetricValue(progress.main.total)}，拜訪＋回報＋銷售有效 ${formatMetricValue(progress.highValue.current)}。</p>
         <p class="small-text">卡牌戰鬥/任務畫面雛形；正式卡牌效果、倍率與掉落率由後端規則接入。</p>
       </div>
     </article>
@@ -4742,6 +6877,38 @@ function petImageUrl(pet, size) {
   return normalizePetAssetUrl(preferred);
 }
 
+function eggImageUrl(pet, size) {
+  if (!pet) return "";
+  const preferred = size === "small"
+    ? pet.egg_thumbnail_url || pet.egg_image_url
+    : pet.egg_image_url || pet.egg_thumbnail_url;
+  return normalizePetAssetUrl(preferred);
+}
+
+function eggVisual(pet, size, hasEgg = true) {
+  const assetUrl = eggImageUrl(pet, size);
+  if (!assetUrl) return petVisual(pet, null, size);
+  const trait = petVisualTrait(pet);
+  const opacity = hasEgg ? 0.92 : 0.45;
+  const alt = `${pet.name}蛋 ${trait.label}`;
+  return `
+    <div class="pet-art-frame pet-art-${size} egg-art-frame" data-visual="${trait.key}" style="opacity:${opacity}">
+      <img class="pet-art-image" src="${escapeHtml(assetUrl)}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async">
+    </div>
+  `;
+}
+
+function petCollectionVisual(pet, owned, size) {
+  if (owned) return petVisual(pet, owned, size);
+  const hasEgg = eggCount(pet.pet_id) > 0;
+  return eggImageUrl(pet, size) ? eggVisual(pet, size, hasEgg) : petVisual(pet, owned, size);
+}
+
+function drawResultVisual(pet, owned, draw, size) {
+  if (draw?.outcomeKind === "egg" && eggImageUrl(pet, size)) return eggVisual(pet, size, true);
+  return petVisual(pet, owned, size);
+}
+
 function petVisual(pet, owned, size) {
   const assetUrl = petImageUrl(pet, size);
   if (!assetUrl) return petSvg(pet, owned, size);
@@ -4807,11 +6974,21 @@ function petSvg(pet, owned, size) {
 document.addEventListener("click", (event) => {
   const target = event.target.closest("button");
   if (!target) return;
+  if (target.dataset.petTalk) {
+    showPetTalk();
+    return;
+  }
+  if (target.dataset.unlockPool) {
+    handlePoolUnlockClick(target.dataset.unlockPool);
+    return;
+  }
+  if (target.dataset.pilotMission) {
+    handlePilotMissionClick();
+    return;
+  }
   const view = target.dataset.view;
   if (view) {
-    document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("is-active", button.dataset.view === view));
-    document.querySelectorAll(".view-panel").forEach((panel) => panel.classList.toggle("is-active", panel.id === `view-${view}`));
-    if (view === "collection") renderCollection();
+    switchToView(view);
   }
   if (target.id === "sampleReportBtn") settleMetrics(SAMPLE_METRICS);
   if (target.id === "switchEmployeeBtn") switchEmployee();
@@ -4846,6 +7023,7 @@ document.addEventListener("click", (event) => {
     render();
   }
   if (target.dataset.star) upgradeStar(target.dataset.star);
+  if (target.dataset.hatch) hatchPet(target.dataset.hatch);
   if (target.dataset.awaken) awakenPet(target.dataset.awaken);
   if (target.dataset.ultimate) ultimatePet(target.dataset.ultimate);
   if (target.dataset.storyline) {
