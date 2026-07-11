@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v48";
+const APP_VERSION = "v49";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -27,6 +27,7 @@ let homeOpeningStateCache = null;
 let petTalkTimer = 0;
 let drawRequest = null;
 let pinnedDrawPoolKey = "";
+let lastDrawRevealLatencyMs = 0;
 let cloudPlayerStateReady = !CLOUD_API_BASE_URL || CLOUD_API_BASE_URL === "mock" || MANAGER_MODE;
 const DRAW_REVEAL_OVERLAY_ENABLED = false;
 
@@ -2648,7 +2649,7 @@ function switchEmployee() {
   reloadWithoutQuery();
 }
 
-function applyBackendEmployeeSnapshot(snapshot = {}) {
+function applyBackendEmployeeSnapshot(snapshot = {}, options = {}) {
   const metrics = normalizeGameMetrics(snapshot.metrics || snapshot.sourceMetrics || state.metrics);
   const sourceMetrics = normalizeGameMetrics(snapshot.sourceMetrics || metrics);
   const deltaMetrics = normalizeGameMetrics(snapshot.deltaMetrics || metrics);
@@ -2694,8 +2695,8 @@ function applyBackendEmployeeSnapshot(snapshot = {}) {
       poolUnlocks: isPlainObject(snapshot.backendConfig.poolUnlocks) ? { ...snapshot.backendConfig.poolUnlocks } : state.backendConfig.poolUnlocks,
     };
   }
-  saveState();
-  render();
+  if (options.persist !== false) saveState();
+  if (options.render !== false) render();
   return state.progress;
 }
 
@@ -2776,7 +2777,7 @@ function cloudPlayerStateToSnapshot(data = {}) {
   return snapshot;
 }
 
-function applyCloudPlayerState(data = {}) {
+function applyCloudPlayerState(data = {}, options = {}) {
   if (isPlainObject(data.player)) {
     PROFILE.branch = cleanProfileText(data.player.branch, PROFILE.branch, 18);
     PROFILE.agent = cleanProfileText(data.player.agent_name || data.player.agent, PROFILE.agent, 18);
@@ -2784,12 +2785,13 @@ function applyCloudPlayerState(data = {}) {
     PROFILE.userKey = stableProfileKey(PROFILE.employeeId || PROFILE.userKey);
   }
   const snapshot = cloudPlayerStateToSnapshot(data);
-  applyBackendEmployeeSnapshot(snapshot);
+  applyBackendEmployeeSnapshot(snapshot, { persist: false, render: false });
   if (snapshot.activePetId && getPet(snapshot.activePetId)) state.activePetId = snapshot.activePetId;
   if (snapshot.settlementSummary) state.latestSettlementSummary = snapshot.settlementSummary;
   state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-playerState" : "cloud-playerState";
   saveState();
-  render();
+  preloadPreparedDrawAssets();
+  if (options.render !== false) render();
   return true;
 }
 
@@ -4554,6 +4556,36 @@ function preparedCloudDraws(poolKey, limit = Infinity) {
     .slice(0, limit);
 }
 
+const preloadedDrawAssetUrls = new Set();
+
+function preparedDrawImageUrl(entry) {
+  const outcome = isPlainObject(entry?.outcome) ? entry.outcome : {};
+  const pet = getPet(outcome.pet_id || outcome.pet?.pet_id) || outcome.pet;
+  if (!pet) return "";
+  if (outcome.outcome_kind === "essence") return essenceImageUrl(outcome.essence_key || pet.storyline_id, "small");
+  if (outcome.outcome_kind === "egg") return eggImageUrl(pet, "small");
+  return petImageUrl(pet, "small", getOwned(pet.pet_id));
+}
+
+function preloadPreparedDrawAssets(limit = 8) {
+  if (typeof Image !== "function") return;
+  const entries = Array.isArray(state.drawSession?.entries) ? state.drawSession.entries : [];
+  entries
+    .filter((entry) => !entry.claimed && !entry.client_revealed)
+    .slice(0, limit)
+    .map(preparedDrawImageUrl)
+    .filter(Boolean)
+    .forEach((url, index) => {
+      if (preloadedDrawAssetUrls.has(url)) return;
+      preloadedDrawAssetUrls.add(url);
+      const image = new Image();
+      image.decoding = "async";
+      if (index === 0 && "fetchPriority" in image) image.fetchPriority = "high";
+      image.src = url;
+      if (typeof image.decode === "function") image.decode().catch(() => {});
+    });
+}
+
 function guaranteedPoolCandidates(pool) {
   return PETS.filter((pet) => pet.storyline_id === pool?.storylineId && isFirstReleaseStoryline(pet.storyline_id));
 }
@@ -5761,6 +5793,14 @@ function renderDrawSurfaces() {
   if (isViewActive("cardgame")) renderCardGameBoard();
 }
 
+function renderImmediateDrawSurfaces() {
+  renderPools();
+  renderDrawResult();
+  const poolGrid = document.getElementById("poolGrid");
+  if (drawRequest?.startedAt) lastDrawRevealLatencyMs = Math.max(0, Date.now() - drawRequest.startedAt);
+  if (poolGrid?.dataset) poolGrid.dataset.lastRevealMs = String(lastDrawRevealLatencyMs);
+}
+
 async function draw(poolKey) {
   if (drawRequest || !canStartDraw(poolKey)) return false;
   const guaranteedPool = guaranteedPoolConfig(poolKey);
@@ -5769,18 +5809,22 @@ async function draw(poolKey) {
 
   pinnedDrawPoolKey = displayPoolKey(poolKey);
   drawRequest = { poolKey, startedAt: Date.now() };
-  showDrawPendingState(poolKey, pool);
-  await waitForDrawPendingPaint();
   try {
     let pet = null;
     const preparedEntry = CLOUD_API_BASE_URL ? nextPreparedCloudDraw(poolKey) : null;
     if (preparedEntry) {
       pet = revealPreparedCloudDraw(pool, preparedEntry);
-      renderDrawSurfaces();
+      renderImmediateDrawSurfaces();
       renderDrawRevealResult();
       if (pet) triggerCelebration(drawOutcomeTone(state.history[0], pet));
-      await drawCloud(poolKey, preparedEntry);
-    } else if (CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock") {
+      preloadPreparedDrawAssets();
+      const syncedPet = await drawCloud(poolKey, preparedEntry);
+      return Boolean(syncedPet);
+    }
+
+    showDrawPendingState(poolKey, pool);
+    await waitForDrawPendingPaint();
+    if (CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock") {
       state.manager.cloudStatus = "draw-session-preparing";
       saveState();
       closeDrawRevealOverlay();
@@ -6000,7 +6044,7 @@ async function drawCloud(poolKey, preparedEntry = null) {
     });
     const data = cloudEnvelopeData(envelope, "draw");
     if (!data || !data.pet || !data.player_state) throw new Error("draw response missing pet/player_state");
-    applyCloudPlayerState(data.player_state);
+    applyCloudPlayerState(data.player_state, { render: false });
     const pet = getPet(data.pet.pet_id) || data.pet;
     const outcomeKind = data.outcome_kind || (data.duplicate ? "star_soul" : "pet");
     const resultText = data.text || (data.duplicate ? `${pet.name || data.pet.pet_id}星魂 +${rewardCount(data.fragments_added)}` : "新寵物加入卡片庫");
@@ -6916,7 +6960,9 @@ function renderPools() {
       </article>
     `;
   }).join("");
-  document.getElementById("poolGrid").innerHTML = regularPools;
+  const poolGrid = document.getElementById("poolGrid");
+  poolGrid.innerHTML = regularPools;
+  if (poolGrid.dataset) poolGrid.dataset.lastRevealMs = String(lastDrawRevealLatencyMs);
 }
 
 function drawOutcomeTone(draw, pet) {
