@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v49";
+const APP_VERSION = "v50";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -19,6 +19,7 @@ const CONTRACT_TEMPLE_STORYLINE_IDS = new Set(["contract", "sl_contract_team_san
 const PROFILE = readEntryProfile();
 const STORAGE_KEY = `${LEGACY_STORAGE_KEY}:${PROFILE.userKey}`;
 const DRAW_SESSION_STORAGE_KEY = `${STORAGE_KEY}:draw-session-v1`;
+const DRAW_CLAIM_QUEUE_STORAGE_KEY = `${STORAGE_KEY}:draw-claim-queue-v1`;
 const HOME_OPENING_STORAGE_KEY = `${STORAGE_KEY}:home-opening-v17`;
 const PRODUCTION_CLOUD_API_BASE_URL = "https://script.google.com/macros/s/AKfycbwUGu1SSwNJxJZqZU5RX7dZC095_1QOS_XHgH_vu7Hw1x2LG99aoR6Eedpm4ntG5VI/exec";
 const CLOUD_API_BASE_URL = readCloudApiBaseUrl();
@@ -28,6 +29,13 @@ let petTalkTimer = 0;
 let drawRequest = null;
 let pinnedDrawPoolKey = "";
 let lastDrawRevealLatencyMs = 0;
+const DRAW_CLAIM_BATCH_DELAY_MS = 250;
+let pendingPreparedDrawClaims = [];
+let activePreparedDrawClaims = [];
+let drawClaimBatchTimer = null;
+let drawClaimBatchInFlight = false;
+let activeDrawClaimRequestId = "";
+let drawClaimRetryCount = 0;
 let cloudPlayerStateReady = !CLOUD_API_BASE_URL || CLOUD_API_BASE_URL === "mock" || MANAGER_MODE;
 const DRAW_REVEAL_OVERLAY_ENABLED = false;
 
@@ -2789,7 +2797,7 @@ function applyCloudPlayerState(data = {}, options = {}) {
   if (snapshot.activePetId && getPet(snapshot.activePetId)) state.activePetId = snapshot.activePetId;
   if (snapshot.settlementSummary) state.latestSettlementSummary = snapshot.settlementSummary;
   state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-playerState" : "cloud-playerState";
-  saveState();
+  if (options.persist !== false) saveState();
   preloadPreparedDrawAssets();
   if (options.render !== false) render();
   return true;
@@ -3104,6 +3112,57 @@ function mockCloudEnvelope(action, payload = {}) {
       errors: [],
     };
   }
+  if (action === "claimDrawBatch") {
+    const entryIds = Array.isArray(payload.draw_entry_ids)
+      ? payload.draw_entry_ids
+      : String(payload.draw_entry_ids || "").split(",").filter(Boolean);
+    const sourceEntries = Array.isArray(state.drawSession?.entries) ? state.drawSession.entries : [];
+    const draws = entryIds.map((entryId) => {
+      const entry = sourceEntries.find((item) => item.entry_id === entryId) || {};
+      const outcome = entry.outcome || {};
+      const pet = getPet(outcome.pet_id || outcome.pet?.pet_id) || outcome.pet || PETS[0];
+      return {
+        draw_entry_id: entryId,
+        pool: entry.pool || payload.pool || "general",
+        outcome_kind: outcome.outcome_kind || "pet",
+        pet,
+        duplicate: false,
+        fragments_added: 0,
+        egg_pet_id: outcome.outcome_kind === "egg" ? pet.pet_id : "",
+        essence_key: outcome.essence_key || "",
+        essence_amount: Number(outcome.essence_amount || 0),
+        resource_label: outcome.resource_label || "",
+        resource_amount: Number(outcome.essence_amount || 0),
+        text: "抽卡結果已入帳。",
+      };
+    });
+    const playerState = mockCloudEnvelope("playerState").data;
+    playerState.resources.tickets = { ...state.tickets };
+    playerState.resources.guaranteed_draws = { ...state.guaranteedDraws };
+    playerState.resources.contract_guarantee_batches = JSON.parse(JSON.stringify(state.contractGuaranteeBatches || []));
+    playerState.resources.draw_session = {
+      ...(state.drawSession || {}),
+      entries: sourceEntries.map((entry) => entryIds.includes(entry.entry_id)
+        ? { ...entry, claimed: true, client_revealed: false }
+        : { ...entry, client_revealed: false }),
+    };
+    playerState.draw_session = playerState.resources.draw_session;
+    return {
+      ok: true,
+      action,
+      server_time: new Date().toISOString(),
+      data: {
+        draw_batch_id: `mock_claim_batch_${Date.now()}`,
+        uid: PROFILE.employeeId || PROFILE.userKey,
+        pool: draws.length === 1 ? draws[0].pool : "mixed",
+        draw_count: draws.length,
+        draws,
+        player_state: playerState,
+      },
+      warnings: [],
+      errors: [],
+    };
+  }
   if (action === "resetPlayer") {
     const playerState = mockCloudEnvelope("playerState").data;
     playerState.resources = {
@@ -3158,6 +3217,16 @@ async function postCloudEnvelope(action, payload = {}) {
   };
   if (CLOUD_API_BASE_URL === "mock") return mockCloudEnvelope(action, body);
   if (typeof fetch !== "function") return null;
+  if (action === "claimDrawBatch") {
+    const response = await fetch(CLOUD_API_BASE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`Cloud API ${action} ${response.status}`);
+    return response.json();
+  }
   return fetchCloudEnvelope(action, body);
 }
 
@@ -5801,6 +5870,168 @@ function renderImmediateDrawSurfaces() {
   if (poolGrid?.dataset) poolGrid.dataset.lastRevealMs = String(lastDrawRevealLatencyMs);
 }
 
+function drawPerformanceMark(name) {
+  if (typeof performance !== "object" || typeof performance.mark !== "function") return;
+  performance.mark(`draw:${name}`);
+}
+
+function persistPreparedDrawClaimQueue() {
+  try {
+    const payload = {
+      pending: pendingPreparedDrawClaims,
+      active: activePreparedDrawClaims,
+      activeRequestId: activeDrawClaimRequestId,
+    };
+    if (!payload.pending.length && !payload.active.length) localStorage.removeItem(DRAW_CLAIM_QUEUE_STORAGE_KEY);
+    else localStorage.setItem(DRAW_CLAIM_QUEUE_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // The in-memory queue still retries when storage is unavailable.
+  }
+}
+
+function restorePreparedDrawClaimQueue() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(DRAW_CLAIM_QUEUE_STORAGE_KEY) || "{}");
+    pendingPreparedDrawClaims = Array.isArray(stored.pending) ? stored.pending : [];
+    activePreparedDrawClaims = Array.isArray(stored.active) ? stored.active : [];
+    activeDrawClaimRequestId = cleanProfileText(stored.activeRequestId || "", "", 240);
+  } catch {
+    pendingPreparedDrawClaims = [];
+    activePreparedDrawClaims = [];
+    activeDrawClaimRequestId = "";
+  }
+}
+
+function schedulePreparedDrawClaimFlush(delay = DRAW_CLAIM_BATCH_DELAY_MS) {
+  if (!CLOUD_API_BASE_URL || CLOUD_API_BASE_URL === "mock" && !pendingPreparedDrawClaims.length && !activePreparedDrawClaims.length) return;
+  if (drawClaimBatchTimer) clearTimeout(drawClaimBatchTimer);
+  drawClaimBatchTimer = setTimeout(() => {
+    drawClaimBatchTimer = null;
+    flushPreparedDrawClaims();
+  }, Math.max(0, delay));
+}
+
+function enqueuePreparedDrawClaim(entry) {
+  if (!entry?.entry_id || !state.drawSession?.session_id) return false;
+  const exists = [...activePreparedDrawClaims, ...pendingPreparedDrawClaims]
+    .some((claim) => claim.entryId === entry.entry_id && claim.sessionId === state.drawSession.session_id);
+  if (exists) return true;
+  pendingPreparedDrawClaims.push({
+    sessionId: state.drawSession.session_id,
+    entryId: entry.entry_id,
+    poolKey: entry.pool,
+    period: currentPeriodKey(),
+    queuedAt: new Date().toISOString(),
+  });
+  persistPreparedDrawClaimQueue();
+  schedulePreparedDrawClaimFlush(pendingPreparedDrawClaims.length >= 5 ? 0 : DRAW_CLAIM_BATCH_DELAY_MS);
+  return true;
+}
+
+function preparedDrawClaimError(envelope) {
+  const first = Array.isArray(envelope?.errors) ? envelope.errors[0] : null;
+  const error = new Error(first?.message || "claimDrawBatch response missing data");
+  error.code = first?.code || "DRAW_CLAIM_BATCH_FAILED";
+  return error;
+}
+
+function replayPendingPreparedDrawDebits(claims = pendingPreparedDrawClaims) {
+  const pendingKeys = new Set(claims.map((claim) => `${claim.sessionId}:${claim.entryId}`));
+  (state.drawSession?.entries || []).forEach((entry) => {
+    if (!pendingKeys.has(`${state.drawSession?.session_id}:${entry.entry_id}`) || entry.claimed) return;
+    entry.client_revealed = true;
+    delete entry.optimistic_debit;
+    applyPreparedDrawOptimisticDebit(entry);
+  });
+}
+
+function applyPreparedDrawClaimResults(data, claims) {
+  const draws = Array.isArray(data?.draws) ? data.draws : [];
+  applyCloudPlayerState(data.player_state, { persist: false, render: false });
+  draws.forEach((drawResult) => {
+    const historyItem = state.history.find((item) => item.drawSessionEntryId === drawResult.draw_entry_id);
+    if (!historyItem) return;
+    const pet = getPet(drawResult.pet?.pet_id) || drawResult.pet || historyItem.petSnapshot;
+    Object.assign(historyItem, {
+      petId: pet?.pet_id || historyItem.petId,
+      petSnapshot: pet ? { ...pet } : historyItem.petSnapshot,
+      duplicate: Boolean(drawResult.duplicate),
+      fragmentsAdded: rewardCount(drawResult.fragments_added),
+      outcomeKind: drawResult.outcome_kind || historyItem.outcomeKind,
+      eggPetId: drawResult.egg_pet_id || "",
+      essenceKey: drawResult.essence_key || "",
+      essenceLabel: drawResult.resource_label || "",
+      essenceAmount: rewardCount(drawResult.essence_amount || 0),
+      resourceLabel: drawResult.resource_label || "",
+      resourceAmount: rewardCount(drawResult.resource_amount || drawResult.essence_amount || 0),
+      pendingSync: false,
+      syncError: false,
+    });
+  });
+  const acceptedIds = new Set(claims.map((claim) => claim.entryId));
+  state.history.forEach((item) => {
+    if (acceptedIds.has(item.drawSessionEntryId)) item.pendingSync = false;
+  });
+  replayPendingPreparedDrawDebits();
+  state.manager.cloudStatus = "cloud-draw-claim-batch";
+  drawPerformanceMark("sync-applied");
+  saveState();
+  renderDrawSurfaces();
+}
+
+async function flushPreparedDrawClaims() {
+  if (drawClaimBatchInFlight || (!activePreparedDrawClaims.length && !pendingPreparedDrawClaims.length)) return false;
+  if (!activePreparedDrawClaims.length) {
+    const first = pendingPreparedDrawClaims[0];
+    activePreparedDrawClaims = pendingPreparedDrawClaims
+      .filter((claim) => claim.sessionId === first.sessionId && claim.period === first.period)
+      .slice(0, 10);
+    const activeKeys = new Set(activePreparedDrawClaims.map((claim) => `${claim.sessionId}:${claim.entryId}`));
+    pendingPreparedDrawClaims = pendingPreparedDrawClaims
+      .filter((claim) => !activeKeys.has(`${claim.sessionId}:${claim.entryId}`));
+    activeDrawClaimRequestId = randomClientId("draw-claim-batch");
+  }
+  const claims = activePreparedDrawClaims.slice();
+  const sessionId = claims[0]?.sessionId || "";
+  const period = claims[0]?.period || currentPeriodKey();
+  if (!claims.length || !sessionId) return false;
+
+  drawClaimBatchInFlight = true;
+  persistPreparedDrawClaimQueue();
+  drawPerformanceMark("sync-sent");
+  try {
+    const envelope = await postCloudEnvelope("claimDrawBatch", {
+      uid: PROFILE.employeeId || PROFILE.userKey,
+      period,
+      draw_session_id: sessionId,
+      draw_entry_ids: claims.map((claim) => claim.entryId),
+      client_request_id: activeDrawClaimRequestId,
+    });
+    const data = cloudEnvelopeData(envelope, "claimDrawBatch");
+    if (!data?.player_state || !Array.isArray(data.draws)) throw preparedDrawClaimError(envelope);
+    activePreparedDrawClaims = [];
+    activeDrawClaimRequestId = "";
+    drawClaimRetryCount = 0;
+    applyPreparedDrawClaimResults(data, claims);
+    persistPreparedDrawClaimQueue();
+    if (pendingPreparedDrawClaims.length) schedulePreparedDrawClaimFlush(0);
+    return true;
+  } catch (error) {
+    drawClaimRetryCount += 1;
+    state.manager.cloudStatus = `cloud-draw-claim-retry:${error.code || error.message || "unknown"}`;
+    claims.forEach((claim) => {
+      const historyItem = state.history.find((item) => item.drawSessionEntryId === claim.entryId);
+      if (historyItem) historyItem.syncError = true;
+    });
+    saveState();
+    persistPreparedDrawClaimQueue();
+    schedulePreparedDrawClaimFlush(Math.min(8000, 500 * (2 ** Math.min(drawClaimRetryCount, 4))));
+    return false;
+  } finally {
+    drawClaimBatchInFlight = false;
+  }
+}
+
 async function draw(poolKey) {
   if (drawRequest || !canStartDraw(poolKey)) return false;
   const guaranteedPool = guaranteedPoolConfig(poolKey);
@@ -5813,13 +6044,16 @@ async function draw(poolKey) {
     let pet = null;
     const preparedEntry = CLOUD_API_BASE_URL ? nextPreparedCloudDraw(poolKey) : null;
     if (preparedEntry) {
+      if (drawRequest) return false;
+      drawPerformanceMark("tap");
       pet = revealPreparedCloudDraw(pool, preparedEntry);
       renderImmediateDrawSurfaces();
+      drawPerformanceMark("reveal");
       renderDrawRevealResult();
       if (pet) triggerCelebration(drawOutcomeTone(state.history[0], pet));
       preloadPreparedDrawAssets();
-      const syncedPet = await drawCloud(poolKey, preparedEntry);
-      return Boolean(syncedPet);
+      enqueuePreparedDrawClaim(preparedEntry);
+      return Boolean(pet);
     }
 
     showDrawPendingState(poolKey, pool);
@@ -8865,6 +9099,16 @@ if (managerDropZone) {
 
 ensureStarterPet();
 ensureCollectionStoryline();
+restorePreparedDrawClaimQueue();
 render();
-loadExternalContent().then(loadCloudState);
+loadExternalContent().then(async () => {
+  await loadCloudState();
+  const outstandingClaims = [...activePreparedDrawClaims, ...pendingPreparedDrawClaims];
+  if (outstandingClaims.length) {
+    replayPendingPreparedDrawDebits(outstandingClaims);
+    saveState();
+    renderDrawSurfaces();
+    schedulePreparedDrawClaimFlush(0);
+  }
+});
 registerServiceWorker();
