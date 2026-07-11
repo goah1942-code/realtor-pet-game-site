@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v51";
+const APP_VERSION = "v52";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -2902,6 +2902,22 @@ function cloudEnvelopeData(envelope, action) {
 function mockCloudEnvelope(action, payload = {}) {
   const period = currentPeriodKey();
   if (action === "playerState") {
+    const mockDrawEntries = PETS.filter((pet) => pet.can_be_drawn !== false).slice(0, 6).map((pet, index) => ({
+      entry_id: `mock_general_${index + 1}`,
+      pool: "general",
+      resource_type: "ticket",
+      claimed: false,
+      outcome: {
+        outcome_kind: "pet",
+        pet_id: pet.pet_id,
+        pet: { ...pet },
+      },
+    }));
+    const mockDrawSession = {
+      session_id: "mock_draw_session_v52",
+      period,
+      entries: mockDrawEntries,
+    };
     return {
       ok: true,
       action,
@@ -2928,7 +2944,9 @@ function mockCloudEnvelope(action, payload = {}) {
           eggs: { pet_call_003: 1 },
           essences: { call_essence: 6, development_essence: 3 },
           special_resources: { templeBlessing: 0 },
+          draw_session: mockDrawSession,
         },
+        draw_session: mockDrawSession,
         reset: { available: true, warning: "重置會清空卡片庫、寵物、星魂、蛋、精華、素材、抽卡紀錄、每日免費抽、月榜第一與加碼，只保留報表重新計算的抽卡點數" },
         active_pet: { pet_id: "pet_dev_001" },
         collection: {
