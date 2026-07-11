@@ -1,10 +1,10 @@
 const CACHE_PREFIX = "realtor-pet-game";
-const CACHE_NAME = `${CACHE_PREFIX}-v46`;
+const CACHE_NAME = `${CACHE_PREFIX}-v48`;
 const CORE_ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=20260711-draw-smooth-v54",
-  "./app.js?v=20260711-draw-smooth-v54",
+  "./styles.css?v=20260711-pool-ledger-v56",
+  "./app.js?v=20260711-pool-ledger-v56",
   "./site.webmanifest",
   "./pet_content_manifest.json",
   "./assets/app-icon.svg",

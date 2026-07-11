@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v54";
+const APP_VERSION = "v56";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -28,6 +28,7 @@ let homeOpeningStateCache = null;
 let petTalkTimer = 0;
 let drawRequest = null;
 let pinnedDrawPoolKey = "";
+let drawViewportFollowToken = 0;
 let lastDrawRevealLatencyMs = 0;
 const DRAW_CLAIM_BATCH_DELAY_MS = 250;
 let pendingPreparedDrawClaims = [];
@@ -878,7 +879,7 @@ function buildHomeTicketStrip() {
       <div class="home-ticket-grid">
         ${entries.map((key) => {
           const value = Number(state.tickets?.[key] || 0);
-          const progress = nextTicketProgress(key, state.metrics);
+          const progress = nextPoolTicketProgress(key);
           return `
             <article class="home-ticket-tile ${value > 0 ? "is-ready" : ""}">
               <div>
@@ -999,20 +1000,30 @@ function buildHomeTodayChangeStrip(monthlyMetrics = {}) {
 }
 
 function questWorkLabel(quest) {
-  if (!quest) return "去補拜訪";
-  if (quest.key === "activity") return "去補拜訪";
-  if (quest.key === "boosted") return "去補拜訪/銷售";
+  if (!quest) return "去補電話";
+  if (quest.key === "activity") return "去補電話";
+  if (quest.key === "boosted") return "去補拜訪進度";
+  if (quest.key === "showing") return "去補帶看";
   if (quest.key === "result") return "去補委託";
   if (quest.key === "contract") return "去補成件";
   return "看本月累積";
 }
 
+const QUEST_PROGRESS_COPY = Object.freeze({
+  activity: { unit: "通電話", reward: "免費池 +1", benefit: "免費池更近" },
+  boosted: { unit: "點拜訪進度", reward: "拜訪池 +1", benefit: "拜訪池更近" },
+  showing: { unit: "組帶看", reward: "帶看池 +1", benefit: "帶看池更近" },
+  result: { unit: "件成果", reward: "成果池 +1", benefit: "成果池更近" },
+  contract: { unit: "點成交進度", reward: "成交池 +1", benefit: "成交池更近" },
+});
+
+function questProgressCopy(quest) {
+  return QUEST_PROGRESS_COPY[quest?.key] || QUEST_PROGRESS_COPY.activity;
+}
+
 function questActionCue(quest) {
-  if (!quest) return { action: "補 1 組拜訪", benefit: "抽卡更近" };
-  if (quest.key === "boosted") return { action: "補 1 組銷售", benefit: "強化抽更近" };
-  if (quest.key === "result") return { action: "補 1 件委託", benefit: "推覺醒素材" };
-  if (quest.key === "contract") return { action: "補 1 件成件", benefit: "祝福抽更近" };
-  return { action: "補 1 組拜訪", benefit: "抽卡更近" };
+  const copy = questProgressCopy(quest);
+  return { action: `補 1 ${copy.unit}`, benefit: copy.benefit };
 }
 
 function questActionLabel(quest) {
@@ -1043,7 +1054,7 @@ function homePetDrawCue(metricsSource = state.metrics) {
   if (resultQuest && !resultQuest.done) return "再 1 件委託/見面談/簽約，成果抽更近";
   if (contractQuest && !contractQuest.done) return "再 1 件成件，祝福抽更近";
   if (resultQuest?.done || contractQuest?.done) return "下一筆成果會繼續推進成果抽";
-  if (boostedQuest && !boostedQuest.done) return "再補銷售或回報，強化抽更近";
+  if (boostedQuest && !boostedQuest.done) return "再補拜訪進度，拜訪池更近";
   return "再補 1 組拜訪，抽卡入口更近";
 }
 
@@ -1196,17 +1207,18 @@ function questProgressState(quest) {
       target: 1,
       gap: 1,
       percent: 0,
-      actionText: "補 1 組拜訪",
-      unlockText: "補 1 組拜訪就能推進抽卡",
-      label: "差 1 組拜訪",
+      actionText: "補 1 通電話",
+      unlockText: "補 1 通電話 → 免費池 +1",
+      label: "差 1 通電話",
     };
   }
   const current = normalizeMetricValue(quest.current || 0);
   const target = Math.max(1, normalizeMetricValue(quest.target || 1));
   const gap = Math.max(0, normalizeMetricValue(target - current));
   const percent = progressPercent(Math.min(current, target), target);
-  const action = questActionCue(quest).action;
-  const unlockText = gap > 0 ? `${action} → ${quest.reward}` : quest.message;
+  const copy = questProgressCopy(quest);
+  const action = `補 ${formatMetricValue(gap || 1)} ${copy.unit}`;
+  const unlockText = gap > 0 ? `${action} → ${copy.reward}` : quest.message;
   return {
     key: quest.key,
     current,
@@ -1215,7 +1227,7 @@ function questProgressState(quest) {
     percent,
     actionText: action,
     unlockText,
-    label: gap > 0 ? `差 ${formatMetricValue(gap)} ${action.replace(/^補\s*/, "").replace(/^1\s*/, "")}` : "可推進",
+    label: gap > 0 ? `差 ${formatMetricValue(gap)} ${copy.unit}` : "可推進",
   };
 }
 
@@ -4614,6 +4626,44 @@ function displayPoolKey(poolKey) {
   }[poolKey] || poolKey;
 }
 
+function poolCardElements() {
+  const poolGrid = document.getElementById("poolGrid");
+  if (!poolGrid || typeof poolGrid.querySelectorAll !== "function") return [];
+  return Array.from(poolGrid.querySelectorAll("[data-pool-card]"));
+}
+
+function captureDrawViewportAnchor(poolKey) {
+  const displayKey = displayPoolKey(poolKey);
+  const cards = poolCardElements();
+  const cardIndex = cards.findIndex((card) => card?.dataset?.poolCard === displayKey);
+  return cardIndex < 0 ? null : { displayKey, cardIndex };
+}
+
+function scheduleDrawViewportFollow(anchor) {
+  if (!anchor) return false;
+  const token = drawViewportFollowToken += 1;
+  const follow = () => {
+    if (token !== drawViewportFollowToken) return;
+    const cards = poolCardElements();
+    const cardIndex = cards.findIndex((card) => card?.dataset?.poolCard === anchor.displayKey);
+    if (cardIndex < 0 || cardIndex === anchor.cardIndex) return;
+    const card = cards[cardIndex];
+    const target = typeof card?.querySelector === "function"
+      ? card.querySelector(".pool-inline-result") || card
+      : card;
+    if (typeof target?.scrollIntoView !== "function") return;
+    const reducedMotion = typeof window !== "undefined"
+      && Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+    target.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "nearest", inline: "nearest" });
+  };
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(follow);
+  } else {
+    follow();
+  }
+  return true;
+}
+
 function integratedGuaranteeForPool(poolKey) {
   const guaranteeKey = {
     visit: "development",
@@ -4997,7 +5047,7 @@ function poolPriority(pool) {
 
 function poolExperienceCue(pool, candidates, unlocked) {
   const tickets = Number(state.tickets?.[pool.key] || 0);
-  const progress = nextTicketProgress(pool.key, state.metrics);
+  const progress = nextPoolTicketProgress(pool.key);
   if (!unlocked) return `${progress.unlockText}，這個卡池就會亮。`;
   if (tickets > 0) {
     if (pool.key === "visit") return "拜訪進度已入帳，可以抽開發線素材與夥伴。";
@@ -5070,6 +5120,36 @@ function poolWorkProgressDetails(poolKey) {
   return { value, nextPercent, ...(details[poolKey] || details.general) };
 }
 
+const POOL_NEXT_PROGRESS_COPY = Object.freeze({
+  general: { scale: 15, unit: "通電話", reward: "免費池 +1" },
+  visit: { scale: 1, unit: "點拜訪進度", reward: "拜訪池 +1" },
+  showing: { scale: 1, unit: "組帶看", reward: "帶看池 +1" },
+  result: { scale: 1, unit: "件成果", reward: "成果池 +1" },
+  contract: { scale: 1, unit: "點成交進度", reward: "成交池 +1" },
+});
+
+function nextPoolTicketProgress(poolKey) {
+  const key = POOL_NEXT_PROGRESS_COPY[poolKey] ? poolKey : "general";
+  const copy = POOL_NEXT_PROGRESS_COPY[key];
+  const work = poolWorkProgressDetails(key);
+  const value = Math.max(0, Number(work.value || 0));
+  const completed = Math.floor(value + 0.000000001);
+  const remainder = Math.max(0, Math.min(1, value - completed));
+  const tierGap = remainder > 0.000000001 ? 1 - remainder : 1;
+  const gap = normalizeMetricValue(tierGap * copy.scale);
+  const actionText = `補 ${formatMetricValue(gap)} ${copy.unit}`;
+  return {
+    key,
+    current: value,
+    target: completed + 1,
+    gap,
+    percent: Math.round(remainder * 100),
+    actionText,
+    unlockText: `${actionText} → ${copy.reward}`,
+    label: `差 ${formatMetricValue(gap)} ${copy.unit}`,
+  };
+}
+
 function poolDrawProgressMarkup(poolKey) {
   const work = poolWorkProgressDetails(poolKey);
   const balance = Math.max(0, Number(state.tickets?.[poolKey] || 0));
@@ -5118,9 +5198,8 @@ function poolThemeClass(poolKey) {
 }
 
 function poolUnlockButtonLabel(poolKey) {
-  const progress = nextTicketProgress(poolKey, state.metrics);
-  if (progress.gap <= 0) return "查看解鎖進度";
-  return `${progress.label}解鎖`;
+  const progress = nextPoolTicketProgress(poolKey);
+  return `${progress.label}可再抽`;
 }
 
 function showActionToast(message) {
@@ -5188,16 +5267,9 @@ function animateCountUps(container) {
 }
 
 function handlePoolUnlockClick(poolKey) {
-  const mission = buildPilotMission(state.metrics);
-  showActionToast(`${mission.title}，${mission.rewardText}。`);
-  switchToView("today", { scroll: false });
-  window.setTimeout(() => {
-    const card = document.querySelector("[data-pilot-mission-card='1']");
-    if (!card) return;
-    card.classList.add("is-focus");
-    card.scrollIntoView({ block: "center", behavior: "smooth" });
-    window.setTimeout(() => card.classList.remove("is-focus"), 1800);
-  }, 80);
+  const normalizedPoolKey = POOL_QUEST_KEY[poolKey] ? poolKey : "general";
+  const progress = nextPoolTicketProgress(normalizedPoolKey);
+  showActionToast(`${progress.unlockText}。依店長最近一次匯入的本月累積計算。`);
 }
 
 function handlePilotMissionClick() {
@@ -5455,7 +5527,7 @@ function buildDailyQuests(rawMetrics) {
       title: "成果覺醒",
       reward: `成果池 +${rewards.result}`,
       current: resultProgress,
-      target: 1,
+      target: Math.floor(resultProgress + 0.000000001) + 1,
       done: resultProgress >= 1,
       message: resultProgress >= 1 ? "委託與斡旋成果已推進成果池" : "先拿 1 件委託或斡旋成果",
     },
@@ -5464,7 +5536,7 @@ function buildDailyQuests(rawMetrics) {
       title: "成交卡池",
       reward: `成交池 +${rewards.contract}`,
       current: contractProgress,
-      target: 1,
+      target: Math.floor(contractProgress + 0.000000001) + 1,
       done: contractProgress >= 1,
       message: contractProgress >= 1 ? "見面談或成交已推進成交池" : "見面談每 2 次、成交每 0.1 件會增加抽數",
     },
@@ -6106,6 +6178,7 @@ async function draw(poolKey) {
   const pool = POOLS.find((item) => item.key === poolKey) || guaranteedPool || (poolKey === "contract_guarantee" ? { key: poolKey, name: "成交神殿保底批次" } : null);
   if (!pool) return false;
 
+  const viewportAnchor = captureDrawViewportAnchor(poolKey);
   pinnedDrawPoolKey = displayPoolKey(poolKey);
   drawRequest = { poolKey, startedAt: Date.now() };
   try {
@@ -6120,6 +6193,7 @@ async function draw(poolKey) {
       }
       enqueuePreparedDrawClaim(preparedEntry);
       renderImmediateDrawSurfaces();
+      scheduleDrawViewportFollow(viewportAnchor);
       schedulePreparedDrawStatePersist();
       setDrawDiagnostic(`revealed:${preparedEntry.entry_id}`);
       drawPerformanceMark("reveal");
@@ -6174,6 +6248,7 @@ async function draw(poolKey) {
     }
 
     renderDrawSurfaces();
+    if (pet) scheduleDrawViewportFollow(viewportAnchor);
     renderDrawRevealResult();
     if (pet) scheduleDrawCelebration(drawOutcomeTone(state.history[0], pet));
     return Boolean(pet);
@@ -6188,6 +6263,7 @@ async function drawTenGeneral() {
   const entries = preparedCloudDraws(poolKey, 10);
   if (drawRequest || !pool || Number(state.tickets?.general || 0) < 10 || entries.length < 10) return false;
 
+  const viewportAnchor = captureDrawViewportAnchor(poolKey);
   pinnedDrawPoolKey = "general";
   const batchRevealId = randomClientId("ten-draw");
   drawRequest = { poolKey, batchSize: 10, startedAt: Date.now() };
@@ -6202,6 +6278,7 @@ async function drawTenGeneral() {
     });
     saveState();
     renderDrawSurfaces();
+    scheduleDrawViewportFollow(viewportAnchor);
     const batchDraws = state.history.filter((item) => item.batchRevealId === batchRevealId);
     const strongest = batchDraws.find((item) => item.outcomeKind === "pet" || item.outcomeKind === "star_soul")
       || batchDraws.find((item) => item.outcomeKind === "egg")
@@ -7228,7 +7305,7 @@ function renderPools() {
     const baseReady = unlocked && tickets > 0 && candidates.length > 0;
     const preparingSequence = Boolean(baseReady && CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock" && (!cloudPlayerStateReady || !nextPreparedCloudDraw(pool.key)));
     const ready = baseReady && !preparingSequence;
-    const progress = nextTicketProgress(pool.key, state.metrics);
+    const progress = nextPoolTicketProgress(pool.key);
     const ticketLabelText = tickets > 0 ? `${tickets} 抽` : guaranteeBalance > 0 ? `保證 ${guaranteeBalance} 抽` : progress.label;
     const canGuide = !ready && !preparingSequence && candidates.length > 0;
     return `
