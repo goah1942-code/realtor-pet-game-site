@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v36";
+const APP_VERSION = "v37";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -24,6 +24,7 @@ const CLOUD_API_BASE_URL = readCloudApiBaseUrl();
 captureCloudManagerKeyFromUrl();
 let homeOpeningStateCache = null;
 let petTalkTimer = 0;
+let drawRequest = null;
 
 let PETS = [
   {
@@ -5297,47 +5298,120 @@ function buildLocalDrawResult(pool) {
   };
 }
 
-async function draw(poolKey) {
-  if (CLOUD_API_BASE_URL) {
-    const cloudDrawn = await drawCloud(poolKey);
-    if (cloudDrawn) return;
-    return;
-  }
+function canStartDraw(poolKey) {
   const guaranteedPool = guaranteedPoolConfig(poolKey);
   if (guaranteedPool) {
-    drawLocalGuaranteed(guaranteedPool);
-    return;
+    const balance = Number(state.guaranteedDraws?.[guaranteedPool.key] || 0);
+    return balance > 0 && guaranteedPoolCandidates(guaranteedPool).length > 0;
   }
   const pool = POOLS.find((item) => item.key === poolKey);
-  if (!pool || state.tickets[poolKey] <= 0) return;
-  const result = buildLocalDrawResult(pool);
-  if (!result?.pet) return;
-  const { pet } = result;
-  state.tickets[poolKey] -= 1;
-  recordDrawPity(poolKey, { pet: ["pet", "star_soul", "essence_conversion", "temple_blessing"].includes(result.outcomeKind) ? pet : null });
-  const assistText = activePetAssistText();
-  if (result.outcomeKind === "pet") state.activePetId = pet.pet_id;
-  state.history.unshift({
-    type: "draw",
-    at: new Date().toISOString(),
-    petId: pet.pet_id,
-    text: `${pool.name} 抽到 ${result.text}`,
-    assistText,
-    poolKey,
-    duplicate: Boolean(result.duplicate),
-    fragmentsAdded: rewardCount(result.fragmentsAdded || 0),
-    outcomeKind: result.outcomeKind,
-    eggPetId: result.eggPetId || "",
-    essenceKey: result.essenceKey || "",
-    essenceLabel: result.essenceLabel || "",
-    essenceAmount: rewardCount(result.essenceAmount || 0),
-    resourceLabel: result.resourceLabel || "",
-    resourceAmount: rewardCount(result.resourceAmount || 0),
-    rateMode: configuredDropRates(pool.key) ? "backend-configured" : "prototype-unweighted",
+  return Boolean(pool && Number(state.tickets?.[poolKey] || 0) > 0 && poolCandidates(pool).length > 0);
+}
+
+function drawPendingMarkup(pool) {
+  return `
+    <article class="draw-pending-card" aria-live="polite" aria-busy="true">
+      <span class="summon-kicker">正在開啟</span>
+      <div class="draw-pending-main">
+        <span class="draw-pending-orbit" aria-hidden="true"></span>
+        <div>
+          <strong>${escapeHtml(pool.name)}</strong>
+          <p>精靈正在回應，請稍候。</p>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function showDrawPendingState(poolKey, pool) {
+  document.querySelectorAll("button[data-draw]").forEach((button) => {
+    const isCurrentPool = button.dataset.draw === poolKey;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    if (isCurrentPool) {
+      button.classList.add("is-drawing");
+      button.textContent = "開啟中...";
+    }
   });
-  state.history = state.history.slice(0, 12);
-  saveState();
-  render();
+  const resultTarget = document.getElementById("drawResult");
+  if (resultTarget) resultTarget.innerHTML = drawPendingMarkup(pool);
+}
+
+function waitForDrawPendingPaint() {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+      resolve();
+      return;
+    }
+    window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
+  });
+}
+
+function renderDrawSurfaces() {
+  renderActivePet();
+  renderEntrySummon();
+  renderProgressDashboard();
+  renderRewardAction();
+  renderPools();
+  renderDrawResult();
+  renderCollectionSummary();
+  renderInventoryBag();
+  if (isViewActive("collection")) renderCollection();
+  if (isViewActive("cardgame")) renderCardGameBoard();
+}
+
+async function draw(poolKey) {
+  if (drawRequest || !canStartDraw(poolKey)) return false;
+  const guaranteedPool = guaranteedPoolConfig(poolKey);
+  const pool = POOLS.find((item) => item.key === poolKey) || guaranteedPool;
+  if (!pool) return false;
+
+  drawRequest = { poolKey, startedAt: Date.now() };
+  showDrawPendingState(poolKey, pool);
+  await waitForDrawPendingPaint();
+  try {
+    let pet = null;
+    if (CLOUD_API_BASE_URL) {
+      pet = await drawCloud(poolKey);
+    } else if (guaranteedPool) {
+      pet = drawLocalGuaranteed(guaranteedPool);
+    } else {
+      const result = buildLocalDrawResult(pool);
+      if (result?.pet) {
+        pet = result.pet;
+        state.tickets[poolKey] -= 1;
+        recordDrawPity(poolKey, { pet: ["pet", "star_soul", "essence_conversion", "temple_blessing"].includes(result.outcomeKind) ? pet : null });
+        const assistText = activePetAssistText();
+        if (result.outcomeKind === "pet") state.activePetId = pet.pet_id;
+        state.history.unshift({
+          type: "draw",
+          at: new Date().toISOString(),
+          petId: pet.pet_id,
+          text: `${pool.name} 抽到 ${result.text}`,
+          assistText,
+          poolKey,
+          duplicate: Boolean(result.duplicate),
+          fragmentsAdded: rewardCount(result.fragmentsAdded || 0),
+          outcomeKind: result.outcomeKind,
+          eggPetId: result.eggPetId || "",
+          essenceKey: result.essenceKey || "",
+          essenceLabel: result.essenceLabel || "",
+          essenceAmount: rewardCount(result.essenceAmount || 0),
+          resourceLabel: result.resourceLabel || "",
+          resourceAmount: rewardCount(result.resourceAmount || 0),
+          rateMode: configuredDropRates(pool.key) ? "backend-configured" : "prototype-unweighted",
+        });
+        state.history = state.history.slice(0, 12);
+        saveState();
+      }
+    }
+
+    renderDrawSurfaces();
+    if (pet) triggerCelebration(drawOutcomeTone(state.history[0], pet));
+    return Boolean(pet);
+  } finally {
+    drawRequest = null;
+  }
 }
 
 function drawLocalGuaranteed(pool) {
@@ -5362,9 +5436,7 @@ function drawLocalGuaranteed(pool) {
   });
   state.history = state.history.slice(0, 12);
   saveState();
-  render();
-  triggerCelebration(drawOutcomeTone(state.history[0], pet));
-  return true;
+  return pet;
 }
 
 async function drawCloud(poolKey) {
@@ -5400,13 +5472,10 @@ async function drawCloud(poolKey) {
     state.history = state.history.slice(0, 12);
     state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-draw" : "cloud-draw";
     saveState();
-    render();
-    triggerCelebration(drawOutcomeTone(state.history[0], pet));
-    return true;
+    return pet;
   } catch (error) {
     state.manager.cloudStatus = `cloud-draw-error:${error.message || "unknown"}`;
     saveState();
-    render();
     return false;
   }
 }
