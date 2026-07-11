@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v53";
+const APP_VERSION = "v54";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -36,6 +36,7 @@ let drawClaimBatchTimer = null;
 let drawClaimBatchInFlight = false;
 let activeDrawClaimRequestId = "";
 let drawClaimRetryCount = 0;
+let preparedDrawStatePersistScheduled = false;
 let cloudPlayerStateReady = !CLOUD_API_BASE_URL || CLOUD_API_BASE_URL === "mock" || MANAGER_MODE;
 const DRAW_REVEAL_OVERLAY_ENABLED = false;
 
@@ -2417,7 +2418,12 @@ function loadState() {
 }
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function buildProgressBackup() {
@@ -4654,11 +4660,17 @@ function preparedDrawImageUrl(entry) {
   return petImageUrl(pet, "small", getOwned(pet.pet_id));
 }
 
-function preloadPreparedDrawAssets(limit = 8) {
+function preloadPreparedDrawAssets(limit = 8, preferredPoolKey = "") {
   if (typeof Image !== "function") return;
   const entries = Array.isArray(state.drawSession?.entries) ? state.drawSession.entries : [];
-  entries
-    .filter((entry) => !entry.claimed && !entry.client_revealed)
+  const pendingEntries = entries.filter((entry) => !entry.claimed && !entry.client_revealed);
+  const orderedEntries = preferredPoolKey
+    ? [
+        ...pendingEntries.filter((entry) => entry.pool === preferredPoolKey),
+        ...pendingEntries.filter((entry) => entry.pool !== preferredPoolKey),
+      ]
+    : pendingEntries;
+  orderedEntries
     .slice(0, limit)
     .map(preparedDrawImageUrl)
     .filter(Boolean)
@@ -5128,12 +5140,14 @@ function showActionToast(message) {
   window.setTimeout(() => toast.classList.remove("is-showing"), 2600);
 }
 
-function triggerCelebration(tone = "growth") {
+function triggerCelebration(tone = "growth", options = {}) {
   if (typeof document === "undefined" || !document.body || typeof document.createElement !== "function") return;
+  document.querySelectorAll?.(".confetti-burst")?.forEach?.((item) => item.remove?.());
   const burst = document.createElement("div");
   burst.className = `confetti-burst is-${tone}`;
   burst.setAttribute("aria-hidden", "true");
-  for (let index = 0; index < 30; index += 1) {
+  const particleCount = Math.max(0, Number(options.particleCount ?? 30));
+  for (let index = 0; index < particleCount; index += 1) {
     const particle = document.createElement("i");
     particle.style.setProperty("--x", `${Math.round((Math.random() - 0.5) * 220)}px`);
     particle.style.setProperty("--y", `${Math.round(-80 - Math.random() * 170)}px`);
@@ -5143,6 +5157,16 @@ function triggerCelebration(tone = "growth") {
   }
   document.body.appendChild(burst);
   window.setTimeout(() => burst.remove(), 1300);
+}
+
+function scheduleDrawCelebration(tone = "growth") {
+  const particleCount = tone === "rare" ? 28 : tone === "shine" ? 18 : 10;
+  const run = () => triggerCelebration(tone, { particleCount });
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(run));
+    return;
+  }
+  setTimeout(run, 0);
 }
 
 function animateCountUps(container) {
@@ -5999,7 +6023,21 @@ function applyPreparedDrawClaimResults(data, claims) {
   state.manager.cloudStatus = "cloud-draw-claim-batch";
   drawPerformanceMark("sync-applied");
   saveState();
-  renderDrawSurfaces();
+  if (!pendingPreparedDrawClaims.length) renderDrawSurfaces();
+}
+
+function schedulePreparedDrawStatePersist() {
+  if (preparedDrawStatePersistScheduled) return;
+  preparedDrawStatePersistScheduled = true;
+  const persist = () => {
+    preparedDrawStatePersistScheduled = false;
+    saveState();
+  };
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(() => window.setTimeout(persist, 0));
+    return;
+  }
+  setTimeout(persist, 0);
 }
 
 async function flushPreparedDrawClaims() {
@@ -6074,20 +6112,20 @@ async function draw(poolKey) {
     let pet = null;
     const preparedEntry = CLOUD_API_BASE_URL ? nextPreparedCloudDraw(poolKey) : null;
     if (preparedEntry) {
-      if (drawRequest) return false;
       drawPerformanceMark("tap");
       pet = revealPreparedCloudDraw(pool, preparedEntry);
       if (!pet) {
         setDrawDiagnostic(`blocked-outcome:${preparedEntry.entry_id || "unknown"}`);
         return false;
       }
+      enqueuePreparedDrawClaim(preparedEntry);
       renderImmediateDrawSurfaces();
+      schedulePreparedDrawStatePersist();
       setDrawDiagnostic(`revealed:${preparedEntry.entry_id}`);
       drawPerformanceMark("reveal");
       renderDrawRevealResult();
-      if (pet) triggerCelebration(drawOutcomeTone(state.history[0], pet));
-      preloadPreparedDrawAssets();
-      enqueuePreparedDrawClaim(preparedEntry);
+      if (pet) scheduleDrawCelebration(drawOutcomeTone(state.history[0], pet));
+      preloadPreparedDrawAssets(8, preparedEntry.pool);
       return Boolean(pet);
     }
 
@@ -6137,7 +6175,7 @@ async function draw(poolKey) {
 
     renderDrawSurfaces();
     renderDrawRevealResult();
-    if (pet) triggerCelebration(drawOutcomeTone(state.history[0], pet));
+    if (pet) scheduleDrawCelebration(drawOutcomeTone(state.history[0], pet));
     return Boolean(pet);
   } finally {
     drawRequest = null;
@@ -6169,7 +6207,7 @@ async function drawTenGeneral() {
       || batchDraws.find((item) => item.outcomeKind === "egg")
       || batchDraws[0];
     const strongestPet = strongest ? (getPet(strongest.petId) || strongest.petSnapshot) : null;
-    if (strongestPet) triggerCelebration(drawOutcomeTone(strongest, strongestPet));
+    if (strongestPet) scheduleDrawCelebration(drawOutcomeTone(strongest, strongestPet));
     return await drawCloudBatch(entries, batchRevealId);
   } finally {
     drawRequest = null;
@@ -6211,7 +6249,6 @@ function revealPreparedCloudDraw(pool, entry) {
     rateMode: entry.resource_type === "contract_guarantee_batch" ? "contract-guarantee-batch" : "cloud-prepared",
   });
   state.history = state.history.slice(0, 12);
-  saveState();
   return pet;
 }
 
@@ -7441,7 +7478,7 @@ function renderDrawResult() {
   const workFollowup = drawWorkFollowupText();
   target.innerHTML = `
     <article class="draw-result-card draw-tone-${escapeHtml(tone)}">
-      <div class="mini-pet">${drawResultVisual(pet, getOwned(pet.pet_id), lastDraw, "large")}</div>
+      <div class="mini-pet">${drawResultVisual(pet, getOwned(pet.pet_id), lastDraw, "small")}</div>
       <div>
         <span class="summon-kicker">抽卡結果</span>
         <div class="pet-name-row">

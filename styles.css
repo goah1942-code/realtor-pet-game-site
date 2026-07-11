@@ -2876,7 +2876,7 @@ body.draw-reveal-open {
     radial-gradient(circle at 94% 0%, rgba(240, 200, 102, 0.34), transparent 34%),
     #fffaf4;
   transform-style: preserve-3d;
-  animation: cardFlip 820ms cubic-bezier(.2, .8, .2, 1) both;
+  animation: cardFlip 220ms cubic-bezier(.2, .8, .2, 1) both;
 }
 
 .pool-inline-main {
@@ -3566,7 +3566,7 @@ body:not(.is-manager-mode) .manager-dashboard {
   position: relative;
   overflow: hidden;
   transform-style: preserve-3d;
-  animation: cardFlip 820ms cubic-bezier(.2, .8, .2, 1) both;
+  animation: cardFlip 220ms cubic-bezier(.2, .8, .2, 1) both;
 }
 
 .draw-pending-card {
