@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v32";
+const APP_VERSION = "v33";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -2653,6 +2653,13 @@ function applyCloudPlayerState(data = {}) {
 }
 
 function applyCloudManagerDashboard(data = {}) {
+  const retainedDashboard = state.manager.cloudDashboard;
+  if (retainedDashboard?.local_commit_fallback && !managerDashboardCanReplaceCommittedFallback(data, retainedDashboard)) {
+    state.manager.cloudStatus = "cloud-managerDashboard-awaiting-committed-import";
+    saveState();
+    render();
+    return false;
+  }
   state.manager.cloudDashboard = data;
   state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-managerDashboard" : "cloud-managerDashboard";
   if (data.latest_import) {
@@ -2667,6 +2674,53 @@ function applyCloudManagerDashboard(data = {}) {
   saveState();
   render();
   return true;
+}
+
+function managerDashboardFromCommittedPreview(preview = {}, commit = {}) {
+  const previewRows = Array.isArray(preview.player_previews) ? preview.player_previews : [];
+  const period = preview.period || previewRows[0]?.report_period || state.manager.lastImport?.period || currentPeriodKey();
+  const confirmedAt = new Date().toISOString();
+  return {
+    ...(isPlainObject(state.manager.cloudDashboard) ? state.manager.cloudDashboard : {}),
+    period,
+    local_commit_fallback: true,
+    latest_import: {
+      import_id: commit.import_id || preview.import_id || "",
+      status: commit.status || "PUBLISHED",
+      uploaded_at: state.manager.cloudDashboard?.latest_import?.uploaded_at || "",
+      confirmed_at: confirmedAt,
+      warning_count: Array.isArray(preview.warnings) ? preview.warnings.length : 0,
+    },
+    players: previewRows.map((row) => ({
+      uid: cleanProfileText(row.uid || "", "", 24),
+      agent_name: row.report_name || row.agent_name || row.uid || "同仁",
+      report_period: row.report_period || period,
+      source_metrics: row.current_source_metrics || row.source_metrics || {},
+      delta_metrics_latest: {},
+      event_basis: row.event_basis || {},
+      updated_at: confirmedAt,
+    })),
+  };
+}
+
+function managerDashboardCanReplaceCommittedFallback(incoming = {}, fallback = {}) {
+  const expectedImportId = cleanProfileText(fallback.latest_import?.import_id || "", "", 120);
+  const incomingImportId = cleanProfileText(incoming.latest_import?.import_id || "", "", 120);
+  if (expectedImportId && incomingImportId !== expectedImportId) return false;
+
+  const expectedPlayers = Array.isArray(fallback.players) ? fallback.players : [];
+  const incomingPlayers = Array.isArray(incoming.players) ? incoming.players : [];
+  if (incomingPlayers.length < expectedPlayers.length) return false;
+
+  const incomingByUid = new Map(incomingPlayers.map((row) => [String(row.uid || row.employee_id || ""), row]));
+  return expectedPlayers.every((expected) => {
+    const uid = String(expected.uid || expected.employee_id || "");
+    const matched = incomingByUid.get(uid);
+    if (!matched) return false;
+    const expectedMetrics = expected.source_metrics || expected.sourceMetrics || {};
+    const incomingMetrics = matched.source_metrics || matched.sourceMetrics || {};
+    return !Object.keys(expectedMetrics).length || Object.keys(incomingMetrics).length > 0;
+  });
 }
 
 function cloudEnvelopeData(envelope, action) {
@@ -3496,6 +3550,7 @@ async function commitCloudImport() {
     });
     const data = cloudEnvelopeData(envelope, "uploadImport");
     if (!data || !data.status) throw new Error(envelope?.errors?.[0]?.message || "commit missing status");
+    state.manager.cloudDashboard = managerDashboardFromCommittedPreview(preview, data);
     state.manager.cloudImportPreview = null;
     state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-uploadImport-commit" : "cloud-uploadImport-commit";
     state.manager.lastImport = {
@@ -3505,9 +3560,10 @@ async function commitCloudImport() {
       rows: data.committed_rows || 0,
     };
     saveState();
+    render();
     await loadCloudState();
     render();
-    setCloudImportStatus(`入帳完成：${data.committed_rows || 0} 位同仁`, "good");
+    setCloudImportStatus(`入帳完成：${data.committed_rows || 0} 位同仁，月榜已更新`, "good");
     return true;
   } catch (error) {
     state.manager.cloudStatus = `cloud-import-commit-error:${error.message || "unknown"}`;
