@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v34";
+const APP_VERSION = "v35";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -2655,7 +2655,7 @@ function applyCloudPlayerState(data = {}) {
 
 function applyCloudManagerDashboard(data = {}) {
   const retainedDashboard = state.manager.cloudDashboard;
-  if (retainedDashboard?.local_commit_fallback && !managerDashboardCanReplaceCommittedFallback(data, retainedDashboard)) {
+  if (shouldRetainCommittedFallback(data, retainedDashboard)) {
     state.manager.cloudStatus = "cloud-managerDashboard-awaiting-committed-import";
     saveState();
     render();
@@ -2733,6 +2733,14 @@ function managerDashboardCanReplaceCommittedFallback(incoming = {}, fallback = {
     const incomingMetrics = matched.source_metrics || matched.sourceMetrics || {};
     return !Object.keys(expectedMetrics).length || Object.keys(incomingMetrics).length > 0;
   });
+}
+
+function shouldRetainCommittedFallback(incoming = {}, fallback = {}) {
+  if (!fallback?.local_commit_fallback) return false;
+  if (managerDashboardCanReplaceCommittedFallback(incoming, fallback)) return false;
+  const confirmedAt = Date.parse(String(fallback.latest_import?.confirmed_at || ""));
+  if (!Number.isFinite(confirmedAt)) return false;
+  return Date.now() - confirmedAt < 2 * 60 * 1000;
 }
 
 function cloudEnvelopeData(envelope, action) {
