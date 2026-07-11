@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v52";
+const APP_VERSION = "v53";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -9054,7 +9054,12 @@ document.addEventListener("click", (event) => {
     drawTenGeneral();
     return;
   }
-  if (target.dataset.draw) draw(target.dataset.draw);
+  if (target.dataset.draw) {
+    setDrawDiagnostic(`clicked:${target.dataset.draw}`);
+    draw(target.dataset.draw).catch((error) => {
+      setDrawDiagnostic(`error:${error?.message || "unknown"}`);
+    });
+  }
   if (target.dataset.active) {
     state.activePetId = target.dataset.active;
     saveState();
