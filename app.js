@@ -26,6 +26,7 @@ captureCloudManagerKeyFromUrl();
 let homeOpeningStateCache = null;
 let petTalkTimer = 0;
 let drawRequest = null;
+const DRAW_REVEAL_OVERLAY_ENABLED = false;
 
 let PETS = [
   {
@@ -5414,6 +5415,7 @@ function closeDrawRevealOverlay() {
 }
 
 function showDrawRevealPending(pool) {
+  if (!DRAW_REVEAL_OVERLAY_ENABLED) return;
   const overlay = openDrawRevealOverlay();
   const target = document.getElementById("drawRevealContent");
   if (!overlay || !target) return;
@@ -5428,6 +5430,7 @@ function showDrawRevealPending(pool) {
 }
 
 function renderDrawRevealResult() {
+  if (!DRAW_REVEAL_OVERLAY_ENABLED) return;
   const overlay = document.getElementById("drawRevealOverlay");
   const target = document.getElementById("drawRevealContent");
   if (!overlay || overlay.hidden || !target) return;
@@ -5556,6 +5559,7 @@ function revealPreparedCloudDraw(pool, entry) {
   const pet = getPet(outcome.pet_id || outcome.pet?.pet_id) || outcome.pet;
   if (!pet) return null;
   entry.client_revealed = true;
+  applyPreparedDrawOptimisticDebit(entry);
   const outcomeKind = outcome.outcome_kind || "pet";
   const label = outcomeKind === "essence"
     ? `${outcome.resource_label || essenceLabelForStoryline(pet.storyline_id)} x${rewardCount(outcome.essence_amount || 1)}`
@@ -5586,6 +5590,61 @@ function revealPreparedCloudDraw(pool, entry) {
   state.history = state.history.slice(0, 12);
   saveState();
   return pet;
+}
+
+function applyPreparedDrawOptimisticDebit(entry) {
+  if (!entry || entry.optimistic_debit) return false;
+  if (entry.resource_type === "ticket") {
+    const previous = Math.max(0, Number(state.tickets?.[entry.pool] || 0));
+    state.tickets[entry.pool] = Math.max(0, previous - 1);
+    entry.optimistic_debit = { type: "ticket", pool: entry.pool, previous };
+    return true;
+  }
+  if (entry.resource_type === "guaranteed_pet_draw") {
+    const guaranteedPool = guaranteedPoolConfig(entry.pool);
+    if (!guaranteedPool) return false;
+    state.guaranteedDraws = normalizeGuaranteedDraws(state.guaranteedDraws);
+    const previous = Math.max(0, Number(state.guaranteedDraws[guaranteedPool.key] || 0));
+    state.guaranteedDraws[guaranteedPool.key] = Math.max(0, previous - 1);
+    entry.optimistic_debit = { type: "guaranteed_pet_draw", key: guaranteedPool.key, previous };
+    return true;
+  }
+  if (entry.resource_type === "contract_guarantee_batch") {
+    const batch = contractGuaranteeBatches().find((item) => item.batch_id === entry.contract_batch_id);
+    if (!batch) return false;
+    const previousRevealed = Math.max(0, Number(batch.revealed_draws || 0));
+    const previousRemaining = Math.max(0, Number(batch.remaining_draws ?? (Number(batch.total_draws || 0) - previousRevealed)));
+    batch.revealed_draws = Math.min(Number(batch.total_draws || 0), previousRevealed + 1);
+    batch.remaining_draws = Math.max(0, previousRemaining - 1);
+    entry.optimistic_debit = {
+      type: "contract_guarantee_batch",
+      batchId: batch.batch_id,
+      previousRevealed,
+      previousRemaining,
+    };
+    return true;
+  }
+  return false;
+}
+
+function rollbackPreparedDrawOptimisticDebit(entry) {
+  const debit = entry?.optimistic_debit;
+  if (!debit) return false;
+  if (debit.type === "ticket") {
+    state.tickets[debit.pool] = debit.previous;
+  } else if (debit.type === "guaranteed_pet_draw") {
+    state.guaranteedDraws = normalizeGuaranteedDraws(state.guaranteedDraws);
+    state.guaranteedDraws[debit.key] = debit.previous;
+  } else if (debit.type === "contract_guarantee_batch") {
+    const batch = contractGuaranteeBatches().find((item) => item.batch_id === debit.batchId);
+    if (batch) {
+      batch.revealed_draws = debit.previousRevealed;
+      batch.remaining_draws = debit.previousRemaining;
+    }
+  }
+  delete entry.optimistic_debit;
+  entry.client_revealed = false;
+  return true;
 }
 
 function drawLocalGuaranteed(pool) {
@@ -5667,6 +5726,7 @@ async function drawCloud(poolKey, preparedEntry = null) {
     state.manager.cloudStatus = `cloud-draw-error:${error.message || "unknown"}`;
     const pending = preparedEntry && state.history.find((item) => item.drawSessionEntryId === preparedEntry.entry_id);
     if (pending) pending.syncError = true;
+    rollbackPreparedDrawOptimisticDebit(preparedEntry);
     saveState();
     renderDrawSurfaces();
     renderDrawRevealResult();
