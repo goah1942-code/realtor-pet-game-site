@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v45";
+const APP_VERSION = "v46";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -26,6 +26,7 @@ captureCloudManagerKeyFromUrl();
 let homeOpeningStateCache = null;
 let petTalkTimer = 0;
 let drawRequest = null;
+let pinnedDrawPoolKey = "";
 let cloudPlayerStateReady = !CLOUD_API_BASE_URL || CLOUD_API_BASE_URL === "mock" || MANAGER_MODE;
 const DRAW_REVEAL_OVERLAY_ENABLED = false;
 
@@ -246,37 +247,46 @@ const POOLS = [
     key: "general",
     name: "免費卡池",
     ticketName: "免費池抽數",
-    source: "每日免費、社區服務、回報、電話",
-    unlockText: "每日有3抽；社區服務每1組、回報每1組、電話每3通都會增加抽數",
+    source: "每日免費 3 抽＋電話量獎勵",
+    unlockText: "每日有 3 抽；電話每累積 15 通再增加 1 抽",
     allowedStorylines: ["sl_development_expedition", "sl_call_signal_tower", "sl_showing_route", "sl_listing_seed_garden", "development", "call", "showing", "listing"],
     rarityBands: ["N", "R"],
   },
   {
-    key: "boosted",
-    name: "高價值行動池",
-    ticketName: "強化行程券",
-    source: "拜訪、回報、銷售有效組數推進",
-    unlockText: "拜訪、回報、銷售有效組數越高，強化池越快亮",
-    allowedStorylines: ["sl_development_expedition", "sl_showing_route", "sl_listing_seed_garden", "development", "showing", "listing"],
-    rarityBands: ["N", "R", "SR"],
+    key: "visit",
+    name: "拜訪卡池",
+    ticketName: "拜訪池抽數",
+    source: "有效拜訪＋其他拜訪 30%＋社區服務 50%",
+    unlockText: "每累積 1 點拜訪進度增加 1 抽，小數進度會保留",
+    allowedStorylines: ["sl_development_expedition", "development"],
+    rarityBands: ["N", "R", "SR", "SSR"],
+  },
+  {
+    key: "showing",
+    name: "帶看卡池",
+    ticketName: "帶看池抽數",
+    source: "帶看組數",
+    unlockText: "每累積 1 組帶看增加 1 抽",
+    allowedStorylines: ["sl_showing_route", "showing"],
+    rarityBands: ["N", "R", "SR", "SSR"],
   },
   {
     key: "result",
-    name: "成果種子池",
-    ticketName: "成果券",
-    source: "委託、見面談、簽約",
-    unlockText: "成交神殿只吃委託 / 見面談 / 簽約，不吃一般行程",
-    allowedStorylines: ["sl_listing_seed_garden", "sl_contract_team_sanctum", "listing", "contract"],
-    rarityBands: ["R", "SR", "SSR"],
+    name: "成果卡池",
+    ticketName: "成果池抽數",
+    source: "委託、斡旋／要約、送訂",
+    unlockText: "每累積 1 件成果增加 1 抽",
+    allowedStorylines: ["sl_listing_seed_garden", "listing"],
+    rarityBands: ["N", "R", "SR", "SSR"],
   },
   {
-    key: "blessing",
-    name: "成交神殿池",
-    ticketName: "簽約祝福券",
-    source: "委託、見面談、簽約核心進度",
-    unlockText: "高價值成果累積後開啟成交神殿回饋",
+    key: "contract",
+    name: "成交卡池",
+    ticketName: "成交池抽數",
+    source: "見面談每 2 次 1 抽＋成交每 0.1 件 1 抽",
+    unlockText: "見面談與成交分別累積，達整數抽數時即可抽卡",
     allowedStorylines: ["sl_contract_team_sanctum", "contract"],
-    rarityBands: ["SR", "SSR"],
+    rarityBands: ["N", "R", "SR", "SSR"],
   },
 ];
 
@@ -295,17 +305,21 @@ const INTERNAL_DRAW_PACING_CONFIG = {
       outcomeWeights: { pet: 0, egg: 5, essence: 95 },
       publicCue: "免費卡池：有做就能累積抽數，完整卡機率由本月節奏控制。",
     },
-    boosted: {
+    visit: {
       outcomeWeights: { pet: 2, egg: 8, essence: 90 },
-      publicCue: "高價值行動池：更適合推進主寵孵化與升星。",
+      publicCue: "拜訪卡池：拜訪與社區服務會累積開發線素材。",
+    },
+    showing: {
+      outcomeWeights: { pet: 3, egg: 9, essence: 88 },
+      publicCue: "帶看卡池：每一組帶看都會推進帶看故事線。",
     },
     result: {
       outcomeWeights: { pet: 5, egg: 12, essence: 83 },
-      publicCue: "成果種子池：委託與見面談要比一般行程更有爽感。",
+      publicCue: "成果卡池：委託、斡旋／要約與送訂會累積成果線素材。",
     },
-    blessing: {
+    contract: {
       outcomeWeights: { pet: 15, egg: 15, essence: 70 },
-      publicCue: "成交神殿池：0.1 件也會累積回饋，高價值成果優先給寵物級回饋。",
+      publicCue: "成交卡池：見面談與成交會累積成交線回饋。",
     },
   },
   essenceAmountWeights: [
@@ -317,7 +331,7 @@ const INTERNAL_DRAW_PACING_CONFIG = {
   ],
 };
 const INTERNAL_PET_PITY_RULES = {
-  blessing: { maxMisses: 5 },
+  contract: { maxMisses: 5 },
 };
 const MONTHLY_BASE_TARGETS = {
   development: { label: "有效拜訪", target: 10, unit: "次" },
@@ -375,7 +389,7 @@ const PET_WISH_RULES = [
     unit: "次議價/改附表",
     message: "今天完成一次價格推進。",
     doneMessage: "價格火花已鍛造。",
-    bonus: { exp: 30, boosted: 1 },
+    bonus: { exp: 30, result: 1 },
   },
   {
     key: "showing",
@@ -386,7 +400,7 @@ const PET_WISH_RULES = [
     unit: "次帶看/見面談",
     message: "今天完成一次面對面路線。",
     doneMessage: "帶看路線已留下足跡。",
-    bonus: { exp: 30, boosted: 1 },
+    bonus: { exp: 30, showing: 1 },
   },
   {
     key: "listing",
@@ -419,7 +433,7 @@ const PET_WISH_RULES = [
     unit: "件簽約",
     message: "簽約會喚醒金鑰感應。",
     doneMessage: "成交金鑰已入手。",
-    bonus: { exp: 50, blessing: 1, materials: { team_core: 1 } },
+    bonus: { exp: 50, contract: 1, materials: { team_core: 1 } },
   },
 ];
 
@@ -432,17 +446,17 @@ const STREAK_MILESTONE_REWARDS = [
   {
     count: 7,
     title: "七日熱手寶箱",
-    bonus: { exp: 120, general: 3, boosted: 1, result: 2, materials: { team_core: 2 } },
+    bonus: { exp: 120, general: 3, visit: 1, result: 2, materials: { team_core: 2 } },
   },
   {
     count: 14,
     title: "十四日王牌寶箱",
-    bonus: { exp: 240, boosted: 2, result: 3, blessing: 1, materials: { team_core: 3, contract_core: 1 } },
+    bonus: { exp: 240, visit: 2, showing: 1, result: 3, contract: 1, materials: { team_core: 3, contract_core: 1 } },
   },
   {
     count: 30,
     title: "三十日店鋪守護寶箱",
-    bonus: { exp: 500, boosted: 3, result: 5, blessing: 2, materials: { team_core: 8, contract_core: 2 } },
+    bonus: { exp: 500, visit: 3, showing: 2, result: 5, contract: 2, materials: { team_core: 8, contract_core: 2 } },
   },
 ];
 
@@ -526,7 +540,7 @@ const ENTRY_REDEEM_RULES = [
 const SPIRIT_FOOD_ACTIVITY_ITEMS = [
   { key: "area", label: "社區服務", unit: "組", hintSubject: "社區服務", rewardText: "會補一口行程食糧。" },
   { key: "development", label: "拜訪", unit: "組", hintSubject: "拜訪", rewardText: "就更接近多一張開發卡。" },
-  { key: "negotiation", label: "回報", unit: "組", hintSubject: "回報", rewardText: "會推進高價值行動池。" },
+  { key: "negotiation", label: "回報", unit: "組", hintSubject: "回報", rewardText: "會記錄成果池進度。" },
   { key: "showing", label: "帶看", unit: "組", hintSubject: "帶看", rewardText: "會讓帶看小旅行更亮。" },
 ];
 
@@ -548,10 +562,11 @@ const HOME_METRIC_ITEMS = [
 ];
 
 const HOME_TICKET_NUDGES = {
-  general: "拜訪再 +1 組，多一點抽卡機會",
-  boosted: "拜訪/面訪再 +1 組，開發卡更接近",
-  result: "委託或成件再 +1 件，成果卡更接近",
-  blessing: "成件再 +1 件，祝福卡更接近",
+  general: "電話量再累積一點，免費抽會增加",
+  visit: "有效拜訪、其他拜訪與社區服務都能推進",
+  showing: "帶看再 +1 組，就多 1 次帶看池抽卡",
+  result: "委託或斡旋成果再 +1 件，就多 1 次成果池抽卡",
+  contract: "見面談與成交會分別累積成交池抽數",
 };
 
 const HOME_HERO_ACTIVITY_ITEMS = [
@@ -779,7 +794,7 @@ function buildHomeMetricsStrip(metricsSource = {}) {
 }
 
 function homeMetricZeroCue(item) {
-  if (item.label === "成件") return "距離祝福券還差 1 件";
+  if (item.label === "成件") return "成交每 0.1 件都會推進成交池";
   if (item.label === "業績") return "成件入帳後一起累積";
   if (item.key === "listing") return "補 1 件委託推成果券";
   if (item.key === "showing") return "補 1 組帶看推強化池";
@@ -820,7 +835,7 @@ function buildHomeStatusBoard(metricsSource = {}) {
 }
 
 function buildHomeTicketStrip() {
-  const entries = ["general", "boosted", "result", "blessing"];
+  const entries = ["general", "visit", "showing", "result", "contract"];
   const total = totalTickets();
   return `
     <section class="home-panel home-ticket-strip" aria-label="目前累積卡片">
@@ -1002,10 +1017,11 @@ function homePetDrawCue(metricsSource = state.metrics) {
 
 function ticketDeltaParts(delta = {}) {
   const labels = {
-    general: "一般券",
-    boosted: "強化券",
-    result: "成果券",
-    blessing: "祝福券",
+    general: "免費池",
+    visit: "拜訪池",
+    showing: "帶看池",
+    result: "成果池",
+    contract: "成交池",
   };
   return Object.entries(labels)
     .filter(([key]) => Number(delta[key] || 0) > 0)
@@ -1016,9 +1032,10 @@ function rewardDeltaForMetrics(baseRewards, nextRewards) {
   return {
     exp: Math.max(0, Number(nextRewards.exp || 0) - Number(baseRewards.exp || 0)),
     general: Math.max(0, Number(nextRewards.general || 0) - Number(baseRewards.general || 0)),
-    boosted: Math.max(0, Number(nextRewards.boosted || 0) - Number(baseRewards.boosted || 0)),
+    visit: Math.max(0, Number(nextRewards.visit || 0) - Number(baseRewards.visit || 0)),
+    showing: Math.max(0, Number(nextRewards.showing || 0) - Number(baseRewards.showing || 0)),
     result: Math.max(0, Number(nextRewards.result || 0) - Number(baseRewards.result || 0)),
-    blessing: Math.max(0, Number(nextRewards.blessing || 0) - Number(baseRewards.blessing || 0)),
+    contract: Math.max(0, Number(nextRewards.contract || 0) - Number(baseRewards.contract || 0)),
   };
 }
 
@@ -1133,9 +1150,10 @@ function buildPilotMissionCard(metricsSource = state.metrics, options = {}) {
 
 const POOL_QUEST_KEY = {
   general: "activity",
-  boosted: "boosted",
+  visit: "boosted",
+  showing: "showing",
   result: "result",
-  blessing: "contract",
+  contract: "contract",
 };
 
 function questProgressState(quest) {
@@ -1188,7 +1206,7 @@ function nextBestTicketProgress(metrics = state.metrics) {
 }
 
 function rewardTicketTotal(rewards = {}) {
-  return Number(rewards.general || 0) + Number(rewards.boosted || 0) + Number(rewards.result || 0) + Number(rewards.blessing || 0);
+  return Number(rewards.general || 0) + Number(rewards.visit || rewards.boosted || 0) + Number(rewards.showing || 0) + Number(rewards.result || 0) + Number(rewards.contract || rewards.blessing || 0);
 }
 
 function buildDrawEfficiencyOptions(metricsSource = state.metrics) {
@@ -1197,7 +1215,7 @@ function buildDrawEfficiencyOptions(metricsSource = state.metrics) {
   const baseTicketTotal = rewardTicketTotal(baseRewards);
   return [
     { key: "development", label: "拜訪", action: "多 1 組拜訪", poolKey: "general" },
-    { key: "showing", label: "帶看", action: "多 1 組帶看", poolKey: "boosted" },
+    { key: "showing", label: "帶看", action: "多 1 組帶看", poolKey: "showing" },
   ].map((option) => {
     const nextMetrics = { ...metrics, [option.key]: normalizeMetricValue(metrics[option.key] || 0) + 1 };
     const nextRewards = calculateRewards(nextMetrics, getActivePet(), false);
@@ -1352,6 +1370,7 @@ function showPetTalk() {
 }
 
 function switchToView(view, options = {}) {
+  if (view !== "gacha") pinnedDrawPoolKey = "";
   document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("is-active", button.dataset.view === view));
   const panelId = `view-${view}`;
   const panel = document.getElementById(panelId);
@@ -2260,8 +2279,8 @@ function gameSourceMetricSummary() {
 function createInitialState() {
   return {
     activePetId: "dev-001",
-    tickets: { general: 3, boosted: 1, result: 1, blessing: 0 },
-    drawPoints: { report_points: 2, daily_free: 3, bonus_draw: 0, boosted: 1, result: 1, blessing: 0 },
+    tickets: { general: 3, visit: 0, showing: 0, result: 0, contract: 0 },
+    drawPoints: { report_points: 0, daily_free: 3, bonus_draw: 0, visit: 0, showing: 0, result: 0, contract: 0 },
     guaranteedDraws: { development: 0, showing: 0, listing: 0, contract: 0 },
     contractGuaranteeBatches: [],
     drawSession: { session_id: "", entries: [] },
@@ -2319,9 +2338,10 @@ function createInitialState() {
     lastRewards: {
       exp: 0,
       general: 0,
-      boosted: 0,
+      visit: 0,
+      showing: 0,
       result: 0,
-      blessing: 0,
+      contract: 0,
       materials: {},
       materialReport: null,
       streakReward: null,
@@ -2427,6 +2447,18 @@ function mergeObject(defaultValue, importedValue) {
   return isPlainObject(importedValue) ? { ...defaultValue, ...importedValue } : { ...defaultValue };
 }
 
+function normalizeTicketBalances(tickets = {}, fallback = {}) {
+  const source = isPlainObject(tickets) ? tickets : {};
+  const base = isPlainObject(fallback) ? fallback : {};
+  return {
+    general: Math.max(0, Number(source.general ?? base.general ?? 0)),
+    visit: Math.max(0, Number(source.visit ?? source.boosted ?? base.visit ?? 0)),
+    showing: Math.max(0, Number(source.showing ?? base.showing ?? 0)),
+    result: Math.max(0, Number(source.result ?? base.result ?? 0)),
+    contract: Math.max(0, Number(source.contract ?? source.blessing ?? base.contract ?? 0)),
+  };
+}
+
 function normalizeDrawPity(drawPity = {}) {
   const source = isPlainObject(drawPity) ? drawPity : {};
   return Object.fromEntries(Object.keys(INTERNAL_PET_PITY_RULES).map((poolKey) => {
@@ -2441,7 +2473,7 @@ function normalizeImportedState(importedState) {
   return {
     ...initial,
     ...source,
-    tickets: mergeObject(initial.tickets, source.tickets),
+    tickets: normalizeTicketBalances(source.tickets, initial.tickets),
     drawPoints: mergeObject(initial.drawPoints, source.drawPoints),
     guaranteedDraws: mergeObject(initial.guaranteedDraws, source.guaranteedDraws),
     contractGuaranteeBatches: Array.isArray(source.contractGuaranteeBatches) ? source.contractGuaranteeBatches.map((item) => ({ ...item })) : [],
@@ -2574,7 +2606,7 @@ function applyBackendEmployeeSnapshot(snapshot = {}) {
   );
   applyCloudResetMarker(snapshot.lastResetAt);
   if (snapshot.replaceInventory) {
-    if (isPlainObject(snapshot.tickets)) state.tickets = { ...snapshot.tickets };
+    if (isPlainObject(snapshot.tickets)) state.tickets = normalizeTicketBalances(snapshot.tickets);
     if (isPlainObject(snapshot.drawPoints)) state.drawPoints = { ...snapshot.drawPoints };
     if (isPlainObject(snapshot.guaranteedDraws)) state.guaranteedDraws = normalizeGuaranteedDraws(snapshot.guaranteedDraws);
     if (isPlainObject(snapshot.materials)) state.materials = { ...snapshot.materials };
@@ -2583,7 +2615,7 @@ function applyBackendEmployeeSnapshot(snapshot = {}) {
     if (isPlainObject(snapshot.specialResources)) state.specialResources = { ...snapshot.specialResources };
     if (isPlainObject(snapshot.collection)) state.collection = { ...snapshot.collection };
   } else {
-    if (isPlainObject(snapshot.tickets)) state.tickets = mergeObject(state.tickets, snapshot.tickets);
+    if (isPlainObject(snapshot.tickets)) state.tickets = normalizeTicketBalances(snapshot.tickets, state.tickets);
     if (isPlainObject(snapshot.drawPoints)) state.drawPoints = mergeObject(state.drawPoints, snapshot.drawPoints);
     if (isPlainObject(snapshot.guaranteedDraws)) state.guaranteedDraws = normalizeGuaranteedDraws(snapshot.guaranteedDraws);
     if (isPlainObject(snapshot.materials)) state.materials = mergeObject(state.materials, snapshot.materials);
@@ -2644,17 +2676,18 @@ function collectionArrayToMap(items = []) {
 
 function cloudResourcesToTickets(resources = {}) {
   const hasAuthoritativeTickets = isPlainObject(resources.tickets);
-  const tickets = hasAuthoritativeTickets ? { ...resources.tickets } : {};
+  const tickets = hasAuthoritativeTickets ? normalizeTicketBalances(resources.tickets) : {};
   const drawPoints = isPlainObject(resources.draw_points) ? resources.draw_points : {};
   // draw_points records earned progress, not the remaining balance. Only use it
   // for compatibility with old API responses that do not expose tickets at all.
   if (!hasAuthoritativeTickets && Object.keys(drawPoints).length) {
     tickets.general = Number(drawPoints.report_points || 0) + Number(drawPoints.daily_free || 0);
-    tickets.boosted = Number(drawPoints.boosted || 0);
+    tickets.visit = Number(drawPoints.visit ?? drawPoints.boosted ?? 0);
+    tickets.showing = Number(drawPoints.showing || 0);
     tickets.result = Number(drawPoints.result || 0);
-    tickets.blessing = Number(drawPoints.blessing || 0) + Number(drawPoints.bonus_draw || 0);
+    tickets.contract = Number(drawPoints.contract ?? drawPoints.blessing ?? 0) + Number(drawPoints.bonus_draw || 0);
   }
-  return tickets;
+  return normalizeTicketBalances(tickets);
 }
 
 function cloudPlayerStateToSnapshot(data = {}) {
@@ -2822,7 +2855,7 @@ function mockCloudEnvelope(action, payload = {}) {
         },
         resources: {
           draw_points: { report_points: 8, daily_free: 3, bonus_draw: 0 },
-          tickets: { general: 6, boosted: 2, result: 3, blessing: 0 },
+          tickets: { general: 6, visit: 2, showing: 2, result: 3, contract: 0 },
           guaranteed_draws: { development: 1, showing: 0, listing: 0, contract: 0 },
           materials: { development_core: 12, listing_core: 2, meeting_core: 1, showing_core: 1, call_core: 2 },
           eggs: { pet_call_003: 1 },
@@ -2856,8 +2889,8 @@ function mockCloudEnvelope(action, payload = {}) {
           previous: { file_name: `${period}_previous_行程質量統計.xlsx`, file_hash: "sha256:mock-previous" },
         },
         players: [
-          { uid: "490326", agent_name: "蔡晉豪", event_basis: { valid_days: 4, e_total_daily_average: 4, e_daily_target_met: true, monthly_policy_development_plus_showing: 6, bcd_valid: 7 }, source_metrics: SAMPLE_METRICS, draw_points_balance: 8, tickets: { general: 6, boosted: 2, result: 3, blessing: 0 }, guaranteed_draws: { development: 1, showing: 0, listing: 0, contract: 0 }, collection_count: 2, latest_settlement_status: "changed", updated_at: new Date().toISOString() },
-          { uid: "490101", agent_name: "示範同仁A", event_basis: { valid_days: 5, e_total_daily_average: 3.6, e_daily_target_met: false, monthly_policy_development_plus_showing: 12, bcd_valid: 5 }, source_metrics: { ...SAMPLE_METRICS, listing: 2, contract: 1, showing: 5 }, draw_points_balance: 4, tickets: { general: 4, boosted: 1, result: 2, blessing: 1 }, guaranteed_draws: { development: 0, showing: 1, listing: 0, contract: 1 }, collection_count: 4, latest_settlement_status: "first_import", updated_at: new Date().toISOString() },
+          { uid: "490326", agent_name: "蔡晉豪", event_basis: { valid_days: 4, e_total_daily_average: 4, e_daily_target_met: true, monthly_policy_development_plus_showing: 6, bcd_valid: 7 }, source_metrics: SAMPLE_METRICS, draw_points_balance: 8, tickets: { general: 6, visit: 2, showing: 2, result: 3, contract: 0 }, guaranteed_draws: { development: 1, showing: 0, listing: 0, contract: 0 }, collection_count: 2, latest_settlement_status: "changed", updated_at: new Date().toISOString() },
+          { uid: "490101", agent_name: "示範同仁A", event_basis: { valid_days: 5, e_total_daily_average: 3.6, e_daily_target_met: false, monthly_policy_development_plus_showing: 12, bcd_valid: 5 }, source_metrics: { ...SAMPLE_METRICS, listing: 2, contract: 1, showing: 5 }, draw_points_balance: 4, tickets: { general: 4, visit: 1, showing: 5, result: 2, contract: 1 }, guaranteed_draws: { development: 0, showing: 1, listing: 0, contract: 1 }, collection_count: 4, latest_settlement_status: "first_import", updated_at: new Date().toISOString() },
         ],
         manager_test_player: {
           uid: "293127",
@@ -3016,7 +3049,7 @@ function mockCloudEnvelope(action, payload = {}) {
     const playerState = mockCloudEnvelope("playerState").data;
     playerState.resources = {
       draw_points: { report_points: 0, daily_free: 0, bonus_draw: 0 },
-      tickets: { general: 0, boosted: 0, result: 0, blessing: 0 },
+      tickets: { general: 0, visit: 0, showing: 0, result: 0, contract: 0 },
       guaranteed_draws: { development: 0, showing: 0, listing: 0, contract: 0 },
       materials: {},
       eggs: {},
@@ -4380,6 +4413,32 @@ function guaranteedPoolConfig(poolKey) {
   return GUARANTEED_DRAW_POOLS.find((pool) => pool.poolKey === poolKey || pool.key === poolKey) || null;
 }
 
+function displayPoolKey(poolKey) {
+  return {
+    guaranteed_development: "visit",
+    guaranteed_showing: "showing",
+    guaranteed_listing: "result",
+    guaranteed_contract: "contract",
+    contract_guarantee: "contract",
+  }[poolKey] || poolKey;
+}
+
+function integratedGuaranteeForPool(poolKey) {
+  const guaranteeKey = {
+    visit: "development",
+    showing: "showing",
+    result: "listing",
+    contract: "contract",
+  }[poolKey];
+  return guaranteeKey ? guaranteedPoolConfig(guaranteeKey) : null;
+}
+
+function integratedGuaranteeBalance(guarantee) {
+  if (!guarantee) return 0;
+  if (guarantee.key === "contract") return Number(state.guaranteedDraws?.contract || 0) + contractGuaranteeRemainingDraws();
+  return Number(state.guaranteedDraws?.[guarantee.key] || 0);
+}
+
 function contractGuaranteeBatches() {
   return Array.isArray(state.contractGuaranteeBatches) ? state.contractGuaranteeBatches : [];
 }
@@ -4651,7 +4710,7 @@ function poolCandidates(pool) {
     if (!pet.can_be_drawn || pet.rarity === "UR") return false;
     if (!allowedStorylines.has(pet.storyline_id)) return false;
     if (!rarityBands.has(pet.rarity)) return false;
-    if ((pool.key === "general" || pool.key === "boosted") && isContractTempleStoryline(pet.storyline_id)) return false;
+    if (pool.key === "general" && isContractTempleStoryline(pet.storyline_id)) return false;
     return true;
   });
 }
@@ -4697,18 +4756,15 @@ function recordDrawPity(poolKey, result = {}) {
 function poolUnlocked(pool, progress = state.progress || buildProgressSnapshot()) {
   const backendUnlock = state.backendConfig?.poolUnlocks?.[pool.key];
   if (backendUnlock?.unlocked === false) return false;
-  if (pool.key === "general") return true;
-  if (pool.key === "boosted") return Boolean(progress.highValue?.done || (state.tickets.boosted || 0) > 0);
-  if (pool.key === "result") return Boolean(progress.contractTemple?.current > 0 || (state.tickets.result || 0) > 0);
-  if (pool.key === "blessing") return Boolean(Number(progress.contractTemple?.sources?.contract || 0) > 0 || (state.tickets.blessing || 0) > 0);
   return true;
 }
 
 function poolPriority(pool) {
   const tickets = Number(state.tickets?.[pool.key] || 0);
-  const unlocked = poolUnlocked(pool);
-  if (tickets > 0 && unlocked) return 100 + tickets;
-  if (unlocked) return 40;
+  const guarantee = integratedGuaranteeForPool(pool.key);
+  const guaranteeReady = guarantee ? integratedGuaranteeBalance(guarantee) > 0 : false;
+  if (pool.key === pinnedDrawPoolKey) return 1000;
+  if (tickets > 0 || guaranteeReady) return 100;
   return 0;
 }
 
@@ -4717,33 +4773,36 @@ function poolExperienceCue(pool, candidates, unlocked) {
   const progress = nextTicketProgress(pool.key, state.metrics);
   if (!unlocked) return `${progress.unlockText}，這個卡池就會亮。`;
   if (tickets > 0) {
-    if (pool.key === "result") return "成果券最容易讓覺醒素材與高階夥伴有感。";
-    if (pool.key === "blessing") return "成交神殿池吃高價值成果；0.1 件也會累積回饋。";
-    if (pool.key === "boosted") return "高價值行動已點亮，適合推進主寵養成。";
+    if (pool.key === "visit") return "拜訪進度已入帳，可以抽開發線素材與夥伴。";
+    if (pool.key === "showing") return "帶看進度已入帳，可以抽帶看線素材與夥伴。";
+    if (pool.key === "result") return "成果已入帳，可以抽成果線素材與夥伴。";
+    if (pool.key === "contract") return "成交進度已入帳，可以抽成交線素材與夥伴。";
     return "先把可抽次數用掉，重複寵物也會變星魂。";
   }
   return candidates.length ? `${progress.unlockText}，這裡就能抽。` : "卡池內容正在接入，先累積行程不會浪費。";
 }
 
 function poolDrawButtonLabel(pool) {
-  if (pool.key === "general") return "抽補給";
-  if (pool.key === "boosted") return "抽強化";
-  if (pool.key === "result") return "抽成果種子";
-  if (pool.key === "blessing") return "進入神殿";
+  if (pool.key === "general") return "抽免費池";
+  if (pool.key === "visit") return "抽拜訪池";
+  if (pool.key === "showing") return "抽帶看池";
+  if (pool.key === "result") return "抽成果池";
+  if (pool.key === "contract") return "抽成交池";
   return "抽一次";
 }
 
 function poolHookText(poolKey) {
-  if (poolKey === "boosted") return "拜訪＋回報＋銷售越接近，強化抽越快亮。";
-  if (poolKey === "result") return "委託、見面談、成件會把成果池推上來。";
-  if (poolKey === "blessing") return "成件是高價值成果，祝福池要讓人有感。";
-  return "拜訪、社區服務、電話都能把補給池點亮。";
+  if (poolKey === "visit") return "有效拜訪＋其他拜訪 30%＋社區服務 50%。";
+  if (poolKey === "showing") return "每一組帶看都會增加帶看池抽數。";
+  if (poolKey === "result") return "委託、斡旋／要約與送訂會增加成果池抽數。";
+  if (poolKey === "contract") return "見面談每 2 次 1 抽；成交每 0.1 件 1 抽。";
+  return "每日 3 抽，加上電話量累積的免費抽。";
 }
 
 function poolThemeClass(poolKey) {
-  if (poolKey === "boosted") return "theme-blue";
+  if (poolKey === "visit" || poolKey === "showing") return "theme-blue";
   if (poolKey === "result") return "theme-orange";
-  if (poolKey === "blessing") return "theme-gold";
+  if (poolKey === "contract") return "theme-gold";
   return "theme-green";
 }
 
@@ -4885,9 +4944,10 @@ function emptyRewards(blocked = false) {
   return {
     exp: 0,
     general: 0,
-    boosted: 0,
+    visit: 0,
+    showing: 0,
     result: 0,
-    blessing: 0,
+    contract: 0,
     materials: {},
     wish: null,
     materialReport: null,
@@ -4911,10 +4971,11 @@ function calculateRewards(rawMetrics, pet = getActivePet(), includeWish = true) 
     metrics.momentum * 18;
   const baseRewards = {
     exp: Math.round(activityScore),
-    general: Math.max(1, Math.floor((metrics.development + metrics.showing + metrics.calls / 15) / 2)),
-    boosted: metrics.development + metrics.negotiation + metrics.showing >= 4 ? 1 : 0,
-    result: resultScore,
-    blessing: contractCount,
+    general: Math.floor(metrics.calls / 15),
+    visit: Math.floor(metrics.development + metrics.area / 2),
+    showing: Math.floor(metrics.showing),
+    result: Math.floor(rewardCount(metrics.listing) + rewardCount(metrics.offer) + rewardCount(metrics.meeting)),
+    contract: Math.floor(rewardCount(metrics.meeting) / 2 + contractCount / 0.1 + 0.0000001),
     materials: {
       listing_core: rewardCount(metrics.listing),
       meeting_core: rewardCount(metrics.meeting),
@@ -4962,9 +5023,10 @@ function applyRewardBonus(rewards, bonus = {}) {
     ...rewards,
     exp: Number(rewards.exp || 0) + Number(bonus.exp || 0),
     general: Number(rewards.general || 0) + Number(bonus.general || 0),
-    boosted: Number(rewards.boosted || 0) + Number(bonus.boosted || 0),
+    visit: Number(rewards.visit || 0) + Number(bonus.visit || 0),
+    showing: Number(rewards.showing || 0) + Number(bonus.showing || 0),
     result: Number(rewards.result || 0) + Number(bonus.result || 0),
-    blessing: Number(rewards.blessing || 0) + Number(bonus.blessing || 0),
+    contract: Number(rewards.contract || 0) + Number(bonus.contract || 0),
     materials: {
       ...(rewards.materials || {}),
       ...Object.fromEntries(Object.entries(bonus.materials || {}).map(([key, value]) => [
@@ -5010,10 +5072,11 @@ function wishRewardText(bonus = {}) {
   const parts = [];
   if (bonus.exp) parts.push(`經驗 +${bonus.exp}`);
   [
-    ["general", "一般券"],
-    ["boosted", "強化券"],
-    ["result", "成果券"],
-    ["blessing", "祝福券"],
+    ["general", "免費池"],
+    ["visit", "拜訪池"],
+    ["showing", "帶看池"],
+    ["result", "成果池"],
+    ["contract", "成交池"],
   ].forEach(([key, label]) => {
     if (bonus[key]) parts.push(`${label} +${bonus[key]}`);
   });
@@ -5030,51 +5093,57 @@ function wishSummaryText(wish = state.lastRewards?.wish) {
 function buildDailyQuests(rawMetrics) {
   const metrics = normalizeGameMetrics(rawMetrics);
   const rewards = calculateRewards(metrics, getActivePet(), false);
-  const activityUnits = metrics.area + metrics.development + metrics.showing + metrics.momentum + Math.floor(metrics.calls / 15);
-  const nextGeneralNeed = activityUnits % 2 === 0 ? 2 : 1;
-  const boostedProgress = metrics.negotiation + metrics.showing + Math.floor(metrics.momentum / 2);
-  const resultProgress =
-    rewardCount(metrics.listing) +
-    rewardCount(metrics.meeting) +
-    rewardCount(metrics.contract);
+  const phoneRemainder = metrics.calls % 15;
+  const visitProgress = metrics.development + metrics.area / 2;
+  const resultProgress = rewardCount(metrics.listing) + rewardCount(metrics.offer) + rewardCount(metrics.meeting);
   const contractCount = rewardCount(metrics.contract);
+  const contractProgress = rewardCount(metrics.meeting) / 2 + contractCount / 0.1;
 
   return [
     {
       key: "activity",
-      title: "行程補給",
-      reward: `一般券 +${rewards.general}`,
-      current: activityUnits,
-      target: 2,
-      done: activityUnits >= 2,
-      message: activityUnits >= 2 ? `再補 ${nextGeneralNeed} 點行程量，衝下一張一般券` : `還差 ${2 - activityUnits} 點行程量`,
+      title: "免費卡池",
+      reward: `電話獎勵 +${rewards.general}`,
+      current: phoneRemainder,
+      target: 15,
+      done: metrics.calls >= 15,
+      message: `電話再 ${phoneRemainder ? 15 - phoneRemainder : 15} 通，多 1 次免費池抽卡`,
     },
     {
       key: "boosted",
-      title: "強化衝刺",
-      reward: "強化券 +1",
-      current: boostedProgress,
-      target: 3,
-      done: boostedProgress >= 3,
-      message: boostedProgress >= 3 ? "今日已達強化池門檻" : `拜訪＋回報＋銷售再 ${3 - boostedProgress} 組`,
+      title: "拜訪卡池",
+      reward: `拜訪池 +${rewards.visit}`,
+      current: visitProgress % 1,
+      target: 1,
+      done: visitProgress >= 1,
+      message: "有效拜訪、其他拜訪與社區服務會累積拜訪池進度",
+    },
+    {
+      key: "showing",
+      title: "帶看卡池",
+      reward: `帶看池 +${rewards.showing}`,
+      current: metrics.showing,
+      target: Math.floor(metrics.showing) + 1,
+      done: metrics.showing >= 1,
+      message: "每增加 1 組帶看，就增加 1 次帶看池抽卡",
     },
     {
       key: "result",
       title: "成果覺醒",
-      reward: `成果券 +${rewards.result}`,
+      reward: `成果池 +${rewards.result}`,
       current: resultProgress,
       target: 1,
       done: resultProgress >= 1,
-      message: resultProgress >= 1 ? "委託、見面談、簽約會推進成交神殿" : "先拿 1 件委託、見面談或簽約",
+      message: resultProgress >= 1 ? "委託與斡旋成果已推進成果池" : "先拿 1 件委託或斡旋成果",
     },
     {
       key: "contract",
-      title: "簽約祝福",
-      reward: `祝福券 +${rewards.blessing}`,
-      current: contractCount,
+      title: "成交卡池",
+      reward: `成交池 +${rewards.contract}`,
+      current: contractProgress,
       target: 1,
-      done: contractCount >= 1,
-      message: contractCount >= 1 ? "已拿到簽約祝福與團隊星核" : "簽約後開啟祝福池與究極素材",
+      done: contractProgress >= 1,
+      message: contractProgress >= 1 ? "見面談或成交已推進成交池" : "見面談每 2 次、成交每 0.1 件會增加抽數",
     },
   ];
 }
@@ -5176,12 +5245,12 @@ function settleMetrics(rawMetrics) {
   state.history.unshift({
     type: "settle",
     at: importedAt,
-    text: `${periodKey} 新增差額：經驗 +${rewards.exp}，成果券 +${rewards.result}${rewards.streakReward ? `，${rewards.streakReward.title}` : ""}${rewards.petGrowth ? `，${petGrowthSummary(rewards.petGrowth)}` : ""}`,
+    text: `${periodKey} 新增差額：經驗 +${rewards.exp}，抽卡 +${rewardTicketTotal(rewards)}${rewards.streakReward ? `，${rewards.streakReward.title}` : ""}${rewards.petGrowth ? `，${petGrowthSummary(rewards.petGrowth)}` : ""}`,
   });
   state.history = state.history.slice(0, 12);
   saveState();
   render();
-  triggerCelebration(rewards.petGrowth ? "pet" : rewards.blessing > 0 ? "rare" : rewards.general > 0 || rewards.result > 0 ? "ticket" : "growth");
+  triggerCelebration(rewards.petGrowth ? "pet" : rewards.contract > 0 ? "rare" : rewardTicketTotal(rewards) > 0 ? "ticket" : "growth");
   return true;
 }
 
@@ -5515,6 +5584,7 @@ async function draw(poolKey) {
   const pool = POOLS.find((item) => item.key === poolKey) || guaranteedPool || (poolKey === "contract_guarantee" ? { key: poolKey, name: "成交神殿保底批次" } : null);
   if (!pool) return false;
 
+  pinnedDrawPoolKey = displayPoolKey(poolKey);
   drawRequest = { poolKey, startedAt: Date.now() };
   showDrawPendingState(poolKey, pool);
   await waitForDrawPendingPaint();
@@ -5583,6 +5653,7 @@ async function drawTenGeneral() {
   const entries = preparedCloudDraws(poolKey, 10);
   if (drawRequest || !pool || Number(state.tickets?.general || 0) < 10 || entries.length < 10) return false;
 
+  pinnedDrawPoolKey = "general";
   const batchRevealId = randomClientId("ten-draw");
   drawRequest = { poolKey, batchSize: 10, startedAt: Date.now() };
   try {
@@ -5612,6 +5683,7 @@ function revealPreparedCloudDraw(pool, entry) {
   const outcome = isPlainObject(entry?.outcome) ? entry.outcome : {};
   const pet = getPet(outcome.pet_id || outcome.pet?.pet_id) || outcome.pet;
   if (!pet) return null;
+  pinnedDrawPoolKey = displayPoolKey(entry.pool);
   entry.client_revealed = true;
   applyPreparedDrawOptimisticDebit(entry);
   const outcomeKind = outcome.outcome_kind || "pet";
@@ -6221,10 +6293,11 @@ function renderProgressDashboard() {
   const contractLine = `委託 ${formatMetricValue(contractSources.listing)} · 見面談 ${formatMetricValue(contractSources.meeting)} · 簽約 ${formatMetricValue(contractSources.contract)}`;
   const phoneSignal = progress.phoneSignal.calls >= 30 ? "訊號很亮" : progress.phoneSignal.calls >= 15 ? "訊號升溫" : "等待信號";
   const unlockLine = [
-    poolUnlocked(POOLS[0], progress) ? "探索補給池" : "",
-    poolUnlocked(POOLS[1], progress) ? "高價值行動池" : "",
-    poolUnlocked(POOLS[2], progress) ? "成果種子池" : "",
-    poolUnlocked(POOLS[3], progress) ? "成交神殿池" : "",
+    poolUnlocked(POOLS[0], progress) ? "免費卡池" : "",
+    poolUnlocked(POOLS[1], progress) ? "拜訪卡池" : "",
+    poolUnlocked(POOLS[2], progress) ? "帶看卡池" : "",
+    poolUnlocked(POOLS[3], progress) ? "成果卡池" : "",
+    poolUnlocked(POOLS[4], progress) ? "成交卡池" : "",
   ].filter(Boolean).join("、") || "完成累積後開啟抽卡";
 
   const periodPill = document.getElementById("progressPeriodPill");
@@ -6357,8 +6430,8 @@ function renderRewards() {
   const rewards = state.lastRewards;
   const rewardItems = [
     ["經驗", Number(rewards.exp || 0), "+"],
-    ["一般券", Number(rewards.general || 0), "+"],
-    ["成果券", Number(rewards.result || 0), "+"],
+    ["抽卡", rewardTicketTotal(rewards), "+"],
+    ["成果池", Number(rewards.result || 0), "+"],
     ["簽約核心", Number(rewards.materials?.contract_core || 0), "+"],
   ];
   if (rewards.wish) rewardItems.push(["心願", "完成", ""]);
@@ -6466,8 +6539,8 @@ function renderRewardAction() {
 
 function buildPoolInlineDrawResult(pool) {
   const drawResult = state.history.find((item) => item.type === "draw");
-  if (!drawResult || drawResult.poolKey !== pool.key) return "";
-  if (drawResult.batchRevealId) return buildPoolTenDrawResult(drawResult.batchRevealId, pool.key);
+  if (!drawResult || displayPoolKey(drawResult.poolKey) !== pool.key) return "";
+  if (drawResult.batchRevealId) return buildPoolTenDrawResult(drawResult.batchRevealId, drawResult.poolKey);
   const pet = getPet(drawResult.petId);
   if (!pet) return "";
   const owned = getOwned(pet.pet_id);
@@ -6603,18 +6676,27 @@ function renderContractGuaranteePool() {
 function renderPools() {
   const total = totalTickets();
   document.getElementById("ticketSummary").textContent = total > 0 ? `可抽 ${total}` : "快解鎖";
-  const regularPools = [...POOLS].sort((left, right) => poolPriority(right) - poolPriority(left)).map((pool) => {
+  const baseOrder = new Map(POOLS.map((pool, index) => [pool.key, index]));
+  const regularPools = [...POOLS].sort((left, right) => (
+    poolPriority(right) - poolPriority(left) || baseOrder.get(left.key) - baseOrder.get(right.key)
+  )).map((pool) => {
     const candidates = poolCandidates(pool);
     const unlocked = poolUnlocked(pool);
     const tickets = Number(state.tickets[pool.key] || 0);
+    const guarantee = integratedGuaranteeForPool(pool.key);
+    const guaranteeBalance = integratedGuaranteeBalance(guarantee);
+    const guaranteePoolKey = pool.key === "contract" && nextPreparedCloudDraw("contract_guarantee")
+      ? "contract_guarantee"
+      : guarantee?.poolKey || "";
+    const guaranteeReady = Boolean(guaranteePoolKey && guaranteeBalance > 0 && canStartDraw(guaranteePoolKey));
     const baseReady = unlocked && tickets > 0 && candidates.length > 0;
     const preparingSequence = Boolean(baseReady && CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock" && (!cloudPlayerStateReady || !nextPreparedCloudDraw(pool.key)));
     const ready = baseReady && !preparingSequence;
     const progress = nextTicketProgress(pool.key, state.metrics);
-    const ticketLabelText = tickets > 0 ? `${tickets} 張` : progress.label;
+    const ticketLabelText = tickets > 0 ? `${tickets} 抽` : guaranteeBalance > 0 ? `保證 ${guaranteeBalance} 抽` : progress.label;
     const canGuide = !ready && !preparingSequence && candidates.length > 0;
     return `
-      <article class="pool-card ${poolThemeClass(pool.key)} ${unlocked ? "" : "is-locked"} ${ready ? "is-ready" : "is-unlockable"}">
+      <article class="pool-card ${poolThemeClass(pool.key)} ${unlocked ? "" : "is-locked"} ${ready || guaranteeReady ? "is-ready" : "is-unlockable"}" data-pool-card="${escapeHtml(pool.key)}">
         <div class="team-topline">
           <h3>${pool.name}</h3>
           <span>${escapeHtml(ticketLabelText)}</span>
@@ -6635,6 +6717,7 @@ function renderPools() {
         </div>
         <div class="pool-draw-actions">
           <button class="${ready ? "primary-button" : "secondary-button unlock-button"}" type="button" ${ready ? `data-draw="${pool.key}"` : preparingSequence ? "disabled" : `data-unlock-pool="${pool.key}"`} ${!ready && !canGuide ? "disabled" : ""}>${escapeHtml(ready ? poolDrawButtonLabel(pool) : preparingSequence ? "順序準備中" : poolUnlockButtonLabel(pool.key))}</button>
+          ${guaranteeBalance > 0 ? `<button class="secondary-button" type="button" ${guaranteeReady ? `data-draw="${escapeHtml(guaranteePoolKey)}"` : "disabled"}>${guaranteeReady ? `抽保證寵物卡（${guaranteeBalance}）` : "保證順序準備中"}</button>` : ""}
           ${pool.key === "general" ? (() => {
             const preparedTen = preparedCloudDraws("general", 10).length;
             const tenReady = ready && tickets >= 10 && preparedTen >= 10;
@@ -6646,7 +6729,7 @@ function renderPools() {
       </article>
     `;
   }).join("");
-  document.getElementById("poolGrid").innerHTML = `${renderGuaranteedDrawPools()}${regularPools}`;
+  document.getElementById("poolGrid").innerHTML = regularPools;
 }
 
 function drawOutcomeTone(draw, pet) {
@@ -6965,10 +7048,11 @@ function metricSummaryText(metrics = state.metrics) {
 function rewardSummaryText(rewards = state.lastRewards) {
   const parts = [];
   const ticketLabels = [
-    ["general", "一般券"],
-    ["boosted", "強化券"],
-    ["result", "成果券"],
-    ["blessing", "祝福券"],
+    ["general", "免費池"],
+    ["visit", "拜訪池"],
+    ["showing", "帶看池"],
+    ["result", "成果池"],
+    ["contract", "成交池"],
   ];
   if (rewards?.exp) parts.push(`經驗 +${rewards.exp}`);
   ticketLabels.forEach(([key, label]) => {
@@ -7079,10 +7163,11 @@ function renderCollectionSummary() {
 
 function ticketLabel(key) {
   return {
-    general: "一般券",
-    boosted: "強化券",
-    result: "成果券",
-    blessing: "祝福券",
+    general: "免費池",
+    visit: "拜訪池",
+    showing: "帶看池",
+    result: "成果池",
+    contract: "成交池",
   }[key] || key;
 }
 
@@ -7707,16 +7792,17 @@ function managerGameProgressRows() {
   const players = state.manager.cloudDashboard?.players;
   if (!Array.isArray(players)) return [];
   return players.map((row) => {
-    const tickets = isPlainObject(row.tickets) ? row.tickets : {};
+    const tickets = normalizeTicketBalances(row.tickets);
     const guaranteed = isPlainObject(row.guaranteed_draws) ? row.guaranteed_draws : {};
     return {
       name: row.agent_name || row.report_name || row.uid || "同仁",
       uid: row.uid || "",
       workPoints: normalizeMetricValue(row.draw_points_balance),
       general: normalizeMetricValue(tickets.general),
-      boosted: normalizeMetricValue(tickets.boosted),
+      visit: normalizeMetricValue(tickets.visit),
+      showing: normalizeMetricValue(tickets.showing),
       result: normalizeMetricValue(tickets.result),
-      blessing: normalizeMetricValue(tickets.blessing),
+      contract: normalizeMetricValue(tickets.contract),
       guaranteed: Object.values(guaranteed).reduce((sum, value) => sum + normalizeMetricValue(value), 0),
       collection: normalizeMetricValue(row.collection_count),
       settlement: row.latest_settlement_status || "empty",
@@ -7741,11 +7827,11 @@ function renderManagerPlayerGameStatus() {
       <div class="audit-table-wrap">
         <div class="manager-game-table" role="table" aria-label="同仁遊戲進度表">
           <div class="manager-game-row manager-game-head" role="row">
-            <span>人名</span><span>員編</span><span>工作點數</span><span>一般券</span><span>強化券</span><span>成果券</span><span>祝福券</span><span>保證抽</span><span>寵物種數</span><span>最近入帳</span>
+            <span>人名</span><span>員編</span><span>工作點數</span><span>免費池</span><span>拜訪池</span><span>帶看池</span><span>成果池</span><span>成交池</span><span>保證抽</span><span>寵物種數</span><span>最近入帳</span>
           </div>
           ${rows.map((row) => `
             <div class="manager-game-row" role="row">
-              <span>${escapeHtml(row.name)}</span><span>${escapeHtml(String(row.uid))}</span><span>${formatMetricValue(row.workPoints)}</span><span>${formatMetricValue(row.general)}</span><span>${formatMetricValue(row.boosted)}</span><span>${formatMetricValue(row.result)}</span><span>${formatMetricValue(row.blessing)}</span><span>${formatMetricValue(row.guaranteed)}</span><span>${formatMetricValue(row.collection)}</span><span>${escapeHtml(managerSettlementLabel(row.settlement))}</span>
+              <span>${escapeHtml(row.name)}</span><span>${escapeHtml(String(row.uid))}</span><span>${formatMetricValue(row.workPoints)}</span><span>${formatMetricValue(row.general)}</span><span>${formatMetricValue(row.visit)}</span><span>${formatMetricValue(row.showing)}</span><span>${formatMetricValue(row.result)}</span><span>${formatMetricValue(row.contract)}</span><span>${formatMetricValue(row.guaranteed)}</span><span>${formatMetricValue(row.collection)}</span><span>${escapeHtml(managerSettlementLabel(row.settlement))}</span>
             </div>
           `).join("") || `<div class="audit-empty">入帳後會在這裡顯示每位同仁的遊戲資源。</div>`}
         </div>

@@ -3285,12 +3285,12 @@ body.is-manager-mode .app-shell {
   display: grid;
   gap: 6px;
   margin-top: 10px;
-  min-width: 900px;
+  min-width: 980px;
 }
 
 .manager-game-row {
   display: grid;
-  grid-template-columns: minmax(92px, 1.2fr) 76px 82px repeat(4, 72px) 82px 74px minmax(110px, 1fr);
+  grid-template-columns: minmax(92px, 1.2fr) 76px 82px repeat(5, 72px) 82px 74px minmax(110px, 1fr);
   gap: 8px;
   align-items: center;
   min-height: 34px;
