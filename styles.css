@@ -2185,6 +2185,177 @@ h3 {
   box-shadow: var(--shadow-card);
 }
 
+body.draw-reveal-open {
+  overflow: hidden;
+}
+
+.draw-reveal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(20, 31, 49, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.draw-reveal-overlay[hidden] {
+  display: none;
+}
+
+.draw-reveal-stage {
+  position: relative;
+  width: min(100%, 390px);
+  max-height: calc(100dvh - 36px);
+  overflow: auto;
+  border: 1px solid rgba(240, 200, 102, 0.56);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 28px 72px rgba(8, 19, 34, 0.38);
+}
+
+.draw-reveal-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid rgba(42, 61, 88, 0.18);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--navy);
+  font-size: 25px;
+  line-height: 1;
+}
+
+.draw-reveal-content {
+  min-height: 360px;
+}
+
+.draw-reveal-pending,
+.draw-reveal-card {
+  min-height: 360px;
+  padding: 26px 22px 22px;
+  text-align: center;
+}
+
+.draw-reveal-pending {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
+  background: linear-gradient(160deg, #fff8e7, #ffffff 68%);
+}
+
+.draw-reveal-pending strong {
+  color: var(--navy);
+  font-size: 22px;
+}
+
+.draw-reveal-pending p {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.draw-reveal-orbit {
+  width: 76px;
+  height: 76px;
+  border: 7px solid rgba(184, 130, 23, 0.18);
+  border-top-color: #b88217;
+  border-right-color: #f0c866;
+  border-radius: 50%;
+  animation: draw-pending-orbit 620ms linear infinite;
+}
+
+.draw-reveal-card {
+  position: relative;
+  overflow: hidden;
+  animation: cardFlip 520ms cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.draw-reveal-visual {
+  display: grid;
+  place-items: center;
+  width: 190px;
+  height: 190px;
+  margin: 4px auto 8px;
+}
+
+.draw-reveal-visual img,
+.draw-reveal-visual svg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.draw-reveal-name {
+  justify-content: center;
+}
+
+.draw-reveal-name h2 {
+  margin: 0;
+  color: var(--navy);
+  font-size: 25px;
+}
+
+.draw-reveal-outcome {
+  display: block;
+  margin-top: 5px;
+  color: #8b5d0b;
+  font-size: 15px;
+}
+
+.draw-reveal-sync {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.draw-reveal-sync.is-saving::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #b88217;
+  animation: draw-sync-pulse 700ms ease-in-out infinite alternate;
+}
+
+.draw-reveal-sync.is-saved {
+  color: var(--green);
+}
+
+.draw-reveal-accept {
+  width: 100%;
+  margin-top: 14px;
+}
+
+@keyframes draw-sync-pulse {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+
+@media (max-height: 640px) {
+  .draw-reveal-content,
+  .draw-reveal-pending,
+  .draw-reveal-card {
+    min-height: 0;
+  }
+
+  .draw-reveal-visual {
+    width: 132px;
+    height: 132px;
+  }
+}
+
 .metric-tile {
   display: grid;
   gap: 3px;

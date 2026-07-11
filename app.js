@@ -5351,16 +5351,21 @@ function buildLocalDrawResult(pool) {
 }
 
 function canStartDraw(poolKey) {
+  const productionSequenceRequired = Boolean(CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock");
   if (poolKey === "contract_guarantee") {
     return contractGuaranteeRemainingDraws() > 0 && Boolean(nextPreparedCloudDraw(poolKey));
   }
   const guaranteedPool = guaranteedPoolConfig(poolKey);
   if (guaranteedPool) {
+    if (productionSequenceRequired) return Boolean(nextPreparedCloudDraw(poolKey));
     if (CLOUD_API_BASE_URL && nextPreparedCloudDraw(poolKey)) return true;
     const balance = Number(state.guaranteedDraws?.[guaranteedPool.key] || 0);
     return balance > 0 && guaranteedPoolCandidates(guaranteedPool).length > 0;
   }
   const pool = POOLS.find((item) => item.key === poolKey);
+  if (productionSequenceRequired) {
+    return Boolean(pool && Number(state.tickets?.[poolKey] || 0) > 0 && poolCandidates(pool).length > 0 && nextPreparedCloudDraw(poolKey));
+  }
   return Boolean(pool && Number(state.tickets?.[poolKey] || 0) > 0 && poolCandidates(pool).length > 0);
 }
 
@@ -5391,6 +5396,68 @@ function showDrawPendingState(poolKey, pool) {
   });
   const resultTarget = document.getElementById("drawResult");
   if (resultTarget) resultTarget.innerHTML = drawPendingMarkup(pool);
+  showDrawRevealPending(pool);
+}
+
+function openDrawRevealOverlay() {
+  const overlay = document.getElementById("drawRevealOverlay");
+  if (!overlay) return null;
+  overlay.hidden = false;
+  document.body?.classList?.add?.("draw-reveal-open");
+  return overlay;
+}
+
+function closeDrawRevealOverlay() {
+  const overlay = document.getElementById("drawRevealOverlay");
+  if (overlay) overlay.hidden = true;
+  document.body?.classList?.remove?.("draw-reveal-open");
+}
+
+function showDrawRevealPending(pool) {
+  const overlay = openDrawRevealOverlay();
+  const target = document.getElementById("drawRevealContent");
+  if (!overlay || !target) return;
+  target.innerHTML = `
+    <div class="draw-reveal-pending" aria-busy="true">
+      <span class="draw-reveal-orbit" aria-hidden="true"></span>
+      <span class="summon-kicker">正在揭曉</span>
+      <strong>${escapeHtml(pool.name)}</strong>
+      <p>抽卡順序已準備，正在翻開這一張。</p>
+    </div>
+  `;
+}
+
+function renderDrawRevealResult() {
+  const overlay = document.getElementById("drawRevealOverlay");
+  const target = document.getElementById("drawRevealContent");
+  if (!overlay || overlay.hidden || !target) return;
+  const lastDraw = state.history.find((item) => item.type === "draw");
+  const pet = lastDraw ? getPet(lastDraw.petId) : null;
+  if (!lastDraw || !pet) return;
+  const owned = getOwned(pet.pet_id);
+  const tone = drawOutcomeTone(lastDraw, pet);
+  const flavor = petFlavorText(pet);
+  const summary = drawResultSummaryText(lastDraw, pet);
+  const syncText = lastDraw.syncError
+    ? "結果已保留，雲端確認失敗，請保持網路後重新開啟。"
+    : lastDraw.pendingSync
+      ? "結果已揭曉，雲端保存中。"
+      : "雲端已保存，可以繼續抽卡。";
+  target.innerHTML = `
+    <article class="draw-reveal-card draw-tone-${escapeHtml(tone)}">
+      <span class="summon-kicker">抽卡結果</span>
+      <div class="draw-reveal-visual">${drawResultVisual(pet, owned, lastDraw, "large")}</div>
+      <div class="pet-name-row draw-reveal-name">
+        <h2>${escapeHtml(pet.name)}</h2>
+        <span class="rarity-badge rarity-${escapeHtml(pet.rarity)}">${escapeHtml(pet.rarity)}</span>
+      </div>
+      <strong class="draw-reveal-outcome">${escapeHtml(drawOutcomeLabel(lastDraw, pet))}</strong>
+      ${flavor ? `<p class="pet-flavor">「${escapeHtml(flavor)}」</p>` : ""}
+      ${summary ? `<p class="draw-result-summary">${escapeHtml(summary)}</p>` : ""}
+      <p class="draw-reveal-sync ${lastDraw.pendingSync ? "is-saving" : "is-saved"}">${escapeHtml(syncText)}</p>
+      <button class="primary-button draw-reveal-accept" type="button" data-close-draw-reveal="1">收下</button>
+    </article>
+  `;
 }
 
 function waitForDrawPendingPaint() {
@@ -5431,8 +5498,15 @@ async function draw(poolKey) {
     if (preparedEntry) {
       pet = revealPreparedCloudDraw(pool, preparedEntry);
       renderDrawSurfaces();
+      renderDrawRevealResult();
       if (pet) triggerCelebration(drawOutcomeTone(state.history[0], pet));
       await drawCloud(poolKey, preparedEntry);
+    } else if (CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock") {
+      state.manager.cloudStatus = "draw-session-preparing";
+      saveState();
+      closeDrawRevealOverlay();
+      await loadCloudState();
+      return false;
     } else if (CLOUD_API_BASE_URL) {
       pet = await drawCloud(poolKey);
     } else if (guaranteedPool) {
@@ -5469,6 +5543,7 @@ async function draw(poolKey) {
     }
 
     renderDrawSurfaces();
+    renderDrawRevealResult();
     if (pet) triggerCelebration(drawOutcomeTone(state.history[0], pet));
     return Boolean(pet);
   } finally {
@@ -5584,6 +5659,7 @@ async function drawCloud(poolKey, preparedEntry = null) {
     state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-draw" : "cloud-draw";
     saveState();
     renderDrawSurfaces();
+    renderDrawRevealResult();
     return pet;
   } catch (error) {
     state.manager.cloudStatus = `cloud-draw-error:${error.message || "unknown"}`;
@@ -5591,6 +5667,7 @@ async function drawCloud(poolKey, preparedEntry = null) {
     if (pending) pending.syncError = true;
     saveState();
     renderDrawSurfaces();
+    renderDrawRevealResult();
     return false;
   }
 }
@@ -6254,11 +6331,15 @@ function renderGuaranteedDrawPools() {
     const target = targets.find((item) => item.key === pool.key) || MONTHLY_BASE_TARGETS[pool.key];
     const balance = balances[pool.key] || 0;
     const candidates = guaranteedPoolCandidates(pool);
-    const ready = balance > 0 && candidates.length > 0;
+    const baseReady = balance > 0 && candidates.length > 0;
+    const preparingSequence = Boolean(baseReady && CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock" && !nextPreparedCloudDraw(pool.poolKey));
+    const ready = baseReady && !preparingSequence;
     const earnedTiers = guaranteedTargetTier(target);
     const nextThreshold = (earnedTiers + 1) * Number(target.target || 0);
     const targetText = `${formatProgressValue(target.current || 0, target.decimals)} / ${formatProgressValue(target.target, target.decimals)} ${target.unit}`;
-    const statusText = ready
+    const statusText = preparingSequence
+      ? "正在準備本次登入的抽卡順序，完成後按鈕會自動亮起。"
+      : ready
       ? `可抽 ${balance} 張完整寵物卡`
       : earnedTiers > 0
         ? `已完成 ${earnedTiers} 個基礎區間；下一張累積到 ${formatProgressValue(nextThreshold, target.decimals)} ${target.unit}`
@@ -6276,7 +6357,7 @@ function renderGuaranteedDrawPools() {
           <span class="soft-pill">${candidates.length} 張候選卡</span>
           <span class="soft-pill">每達 1 段再得 1 張</span>
         </div>
-        <button class="${ready ? "primary-button" : "secondary-button"}" type="button" ${ready ? `data-draw="${escapeHtml(pool.poolKey)}"` : "disabled"}>${ready ? "抽保證寵物卡" : earnedTiers > 0 ? "下一段累積中" : "尚未達標"}</button>
+        <button class="${ready ? "primary-button" : "secondary-button"}" type="button" ${ready ? `data-draw="${escapeHtml(pool.poolKey)}"` : "disabled"}>${ready ? "抽保證寵物卡" : preparingSequence ? "順序準備中" : earnedTiers > 0 ? "下一段累積中" : "尚未達標"}</button>
         ${buildPoolInlineDrawResult({ key: pool.poolKey })}
       </article>
     `;
@@ -6324,10 +6405,12 @@ function renderPools() {
     const candidates = poolCandidates(pool);
     const unlocked = poolUnlocked(pool);
     const tickets = Number(state.tickets[pool.key] || 0);
-    const ready = unlocked && tickets > 0 && candidates.length > 0;
+    const baseReady = unlocked && tickets > 0 && candidates.length > 0;
+    const preparingSequence = Boolean(baseReady && CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock" && !nextPreparedCloudDraw(pool.key));
+    const ready = baseReady && !preparingSequence;
     const progress = nextTicketProgress(pool.key, state.metrics);
     const ticketLabelText = tickets > 0 ? `${tickets} 張` : progress.label;
-    const canGuide = !ready && candidates.length > 0;
+    const canGuide = !ready && !preparingSequence && candidates.length > 0;
     return `
       <article class="pool-card ${poolThemeClass(pool.key)} ${unlocked ? "" : "is-locked"} ${ready ? "is-ready" : "is-unlockable"}">
         <div class="team-topline">
@@ -6348,7 +6431,7 @@ function renderPools() {
           <span class="soft-pill">${escapeHtml(drawPacingCue(pool.key))}</span>
           <span class="soft-pill">${escapeHtml(activePetAssistText().replace("主寵助力：", ""))}</span>
         </div>
-        <button class="${ready ? "primary-button" : "secondary-button unlock-button"}" type="button" ${ready ? `data-draw="${pool.key}"` : `data-unlock-pool="${pool.key}"`} ${!ready && !canGuide ? "disabled" : ""}>${escapeHtml(ready ? poolDrawButtonLabel(pool) : poolUnlockButtonLabel(pool.key))}</button>
+        <button class="${ready ? "primary-button" : "secondary-button unlock-button"}" type="button" ${ready ? `data-draw="${pool.key}"` : preparingSequence ? "disabled" : `data-unlock-pool="${pool.key}"`} ${!ready && !canGuide ? "disabled" : ""}>${escapeHtml(ready ? poolDrawButtonLabel(pool) : preparingSequence ? "順序準備中" : poolUnlockButtonLabel(pool.key))}</button>
         ${buildPoolInlineDrawResult(pool)}
       </article>
     `;
@@ -8097,6 +8180,10 @@ function petSvg(pet, owned, size) {
 document.addEventListener("click", (event) => {
   const target = event.target.closest("button");
   if (!target) return;
+  if (target.dataset.closeDrawReveal) {
+    closeDrawRevealOverlay();
+    return;
+  }
   if (target.dataset.petTalk) {
     showPetTalk();
     return;
