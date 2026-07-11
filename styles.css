@@ -2717,14 +2717,24 @@ h3 {
   padding: 18px;
 }
 
+body.is-manager-mode .app-shell {
+  width: min(100%, 1180px);
+}
+
 .manager-data-workflow {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   margin-top: 14px;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #f7f9fb;
+}
+
+.manager-data-workflow > * {
+  grid-column: 1 / -1;
+  min-width: 0;
 }
 
 .manager-data-heading {
