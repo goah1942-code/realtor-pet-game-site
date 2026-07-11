@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v50";
+const APP_VERSION = "v51";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -5875,6 +5875,11 @@ function drawPerformanceMark(name) {
   performance.mark(`draw:${name}`);
 }
 
+function setDrawDiagnostic(status) {
+  const poolGrid = document.getElementById("poolGrid");
+  if (poolGrid?.dataset) poolGrid.dataset.lastDrawStatus = status;
+}
+
 function persistPreparedDrawClaimQueue() {
   try {
     const payload = {
@@ -6033,7 +6038,14 @@ async function flushPreparedDrawClaims() {
 }
 
 async function draw(poolKey) {
-  if (drawRequest || !canStartDraw(poolKey)) return false;
+  if (drawRequest) {
+    setDrawDiagnostic("blocked-request");
+    return false;
+  }
+  if (!canStartDraw(poolKey)) {
+    setDrawDiagnostic("blocked-eligibility");
+    return false;
+  }
   const guaranteedPool = guaranteedPoolConfig(poolKey);
   const pool = POOLS.find((item) => item.key === poolKey) || guaranteedPool || (poolKey === "contract_guarantee" ? { key: poolKey, name: "成交神殿保底批次" } : null);
   if (!pool) return false;
@@ -6047,7 +6059,12 @@ async function draw(poolKey) {
       if (drawRequest) return false;
       drawPerformanceMark("tap");
       pet = revealPreparedCloudDraw(pool, preparedEntry);
+      if (!pet) {
+        setDrawDiagnostic(`blocked-outcome:${preparedEntry.entry_id || "unknown"}`);
+        return false;
+      }
       renderImmediateDrawSurfaces();
+      setDrawDiagnostic(`revealed:${preparedEntry.entry_id}`);
       drawPerformanceMark("reveal");
       renderDrawRevealResult();
       if (pet) triggerCelebration(drawOutcomeTone(state.history[0], pet));
