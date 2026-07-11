@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v30";
+const APP_VERSION = "v31";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -2268,6 +2268,7 @@ function createInitialState() {
       cloudStatus: "local",
       cloudDashboard: null,
       cloudImportPreview: null,
+      selectedImportFile: "",
       testResetBusy: false,
       testResetStatus: "",
       testResetTone: "",
@@ -2840,8 +2841,8 @@ function mockCloudEnvelope(action, payload = {}) {
         preview_token: "mock_import_001",
         summary: { matched_active_players: 2, team_rows: 1, skipped_rows: 0, missing_active_players: 0, warning_count: 0 },
         player_previews: [
-          { uid: "490326", report_name: "蔡晉豪", report_period: period, event_basis: { e_valid: 3, e_total: 4.2, bcd_valid: 5 }, reward_preview: { draw_points_delta: 3 }, row_status: "MATCHED" },
-          { uid: "490101", report_name: "示範同仁A", report_period: period, event_basis: { e_valid: 2, e_total: 3, bcd_valid: 4 }, reward_preview: { draw_points_delta: 2 }, row_status: "MATCHED" },
+          { uid: "490326", report_name: "蔡晉豪", report_period: period, current_source_metrics: { b_development_total: { valid: 4, total: 7 }, d_showing_group: { valid: 2, total: 2 }, listing: { valid: 1, total: 1 } }, event_basis: { e_valid: 3, e_total: 4.2, bcd_valid: 5, monthly_policy_development_plus_showing: 6 }, reward_preview: { draw_points_delta: 3 }, row_status: "MATCHED" },
+          { uid: "490101", report_name: "示範同仁A", report_period: period, current_source_metrics: { b_development_total: { valid: 8, total: 10 }, d_showing_group: { valid: 5, total: 5 }, listing: { valid: 2, total: 2 }, contract: { valid: 1, total: 1 } }, event_basis: { e_valid: 7, e_total: 12, bcd_valid: 10, monthly_policy_development_plus_showing: 13 }, reward_preview: { draw_points_delta: 7 }, row_status: "MATCHED" },
         ],
         warnings: [],
       },
@@ -3544,6 +3545,9 @@ function applyManagerImportText(text, source = "manager-upload") {
 function handleManagerFile(file) {
   if (!file) return false;
   const name = file.name || "匯入檔案";
+  state.manager.selectedImportFile = name;
+  saveState();
+  renderManagerImportSource();
   if (/\.(xlsx|xls)$/i.test(name)) {
     previewCloudExcelFile(file);
     return true;
@@ -6793,6 +6797,29 @@ function collectionCountsByStoryline() {
 }
 
 function managerLeaderboardRows() {
+  const previewRows = state.manager.cloudImportPreview?.player_previews;
+  if (Array.isArray(previewRows) && previewRows.length) {
+    return managerAuditRows().map((row) => ({
+      agent: row.name,
+      employeeId: row.uid,
+      branch: PROFILE.branch,
+      monthlyDevelopmentShowing: normalizeMetricValue(row.monthlyDevelopmentShowing ?? row.development + row.showing),
+      highValueEffective: normalizeMetricValue(row.highValueEffective),
+      eTotal: normalizeMetricValue(row.eTotal),
+      listing: normalizeMetricValue(row.listing),
+      meeting: normalizeMetricValue(row.meeting),
+      contract: normalizeMetricValue(row.contract),
+      showing: normalizeMetricValue(row.showing),
+      calls: normalizeMetricValue(row.calls),
+      source: "preview",
+    })).sort((left, right) =>
+      right.monthlyDevelopmentShowing - left.monthlyDevelopmentShowing ||
+      right.contract - left.contract ||
+      right.listing - left.listing ||
+      right.showing - left.showing ||
+      String(left.employeeId).localeCompare(String(right.employeeId), "zh-Hant")
+    );
+  }
   const cloudPlayers = state.manager.cloudDashboard?.players;
   if (Array.isArray(cloudPlayers) && cloudPlayers.length) {
     return cloudPlayers.map((row) => {
@@ -6925,6 +6952,8 @@ function managerAuditRows() {
         eValid: normalizeMetricValue(basis.e_valid ?? metricPairValue(metrics, "e_total_group")),
         eTotal: normalizeMetricValue(basis.e_total ?? metricPairValue(metrics, "e_total_group", "total")),
         calls: normalizeMetricValue(basis.calls ?? metricPairValue(metrics, "calls")),
+        monthlyDevelopmentShowing: normalizeMetricValue(basis.monthly_policy_development_plus_showing ?? metricPairValue(metrics, "b_development_total") + metricPairValue(metrics, "d_showing_group")),
+        highValueEffective: normalizeMetricValue(basis.bcd_valid),
         listing: metricPairValue(metrics, "listing") + metricPairValue(metrics, "rent_listing"),
         meeting: metricPairValue(metrics, "meeting_or_offer") + metricPairValue(metrics, "rent_meeting_or_offer"),
         contract: metricPairValue(metrics, "contract") + metricPairValue(metrics, "rent_contract"),
@@ -6949,6 +6978,8 @@ function managerAuditRows() {
         eValid: normalizeMetricValue(basis.e_valid ?? metricPairValue(metrics, "e_total_group")),
         eTotal: normalizeMetricValue(basis.e_total ?? metricPairValue(metrics, "e_total_group", "total")),
         calls: normalizeMetricValue(basis.calls ?? metricPairValue(metrics, "calls")),
+        monthlyDevelopmentShowing: normalizeMetricValue(basis.monthly_policy_development_plus_showing ?? metricPairValue(metrics, "b_development_total") + metricPairValue(metrics, "d_showing_group")),
+        highValueEffective: normalizeMetricValue(basis.bcd_valid),
         listing: metricPairValue(metrics, "listing") + metricPairValue(metrics, "rent_listing"),
         meeting: metricPairValue(metrics, "meeting_or_offer") + metricPairValue(metrics, "rent_meeting_or_offer"),
         contract: metricPairValue(metrics, "contract") + metricPairValue(metrics, "rent_contract"),
@@ -7036,7 +7067,7 @@ function renderManagerImportAudit() {
   const modeLabel = state.manager.cloudImportPreview?.import_id ? "預覽資料（尚未入帳）" : rows.length ? "已入帳資料" : "尚無資料";
   target.innerHTML = `
     <article class="manager-card">
-      <span class="summon-kicker">本月同仁明細</span>
+      <span class="summon-kicker">步驟 2 · 預覽輸入數據</span>
       <strong>${modeLabel} · ${rows.length} 位</strong>
       <div class="audit-table-wrap">
         <div class="audit-table" role="table" aria-label="匯入數據比對表">
@@ -7115,10 +7146,11 @@ function renderManagerLeaderboard() {
   const target = document.getElementById("managerLeaderboard");
   if (!target) return;
   const rows = managerLeaderboardRows();
+  const isPreview = Boolean(state.manager.cloudImportPreview?.import_id);
   target.innerHTML = `
     <article class="manager-card">
-      <span class="summon-kicker">月榜排序</span>
-      <strong>本月同仁行程狀態：${rows.length} 位</strong>
+      <span class="summon-kicker">步驟 3 · 月榜排名</span>
+      <strong>${isPreview ? "依本次預覽數字即時排序" : "依目前已入帳數字排序"} · ${rows.length} 位</strong>
       <div class="leaderboard-table" role="table" aria-label="店長月榜排序">
         <div class="leaderboard-row leaderboard-head" role="row">
           <span>名次</span>
@@ -7137,9 +7169,16 @@ function renderManagerLeaderboard() {
           </div>
         `).join("")}
       </div>
-      <p class="small-text">月榜第一與店長加碼屬於可失去獎勵；同仁若選全部重置，不保留這些額外次數。</p>
+      <p class="small-text">${isPreview ? "目前排名尚未入帳；確認後會成為正式本月月榜。" : "月榜使用目前正式累積數據；店長與秘書不列入同仁排名。"}</p>
     </article>
   `;
+}
+
+function renderManagerImportSource() {
+  const target = document.getElementById("managerSelectedFileName");
+  if (!target) return;
+  const selected = cleanProfileText(state.manager.selectedImportFile || "", "", 160);
+  target.textContent = selected ? `已選擇：${selected}` : "尚未選擇檔案";
 }
 
 function renderManagerResetTools() {
@@ -7298,6 +7337,7 @@ function renderManagerDashboard() {
   if (temporaryTaskToggle) temporaryTaskToggle.textContent = state.manager.temporaryTaskStarted ? "已開啟" : "未開啟";
 
   renderManagerTemporaryTasks();
+  renderManagerImportSource();
   renderManagerMonthStatus();
   renderManagerImportAudit();
   renderManagerLeaderboard();

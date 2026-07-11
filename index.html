@@ -24,7 +24,7 @@
     <link rel="icon" href="./assets/app-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./assets/app-icon-512.png" />
     <link rel="manifest" href="./site.webmanifest" />
-    <link rel="stylesheet" href="./styles.css?v=20260711-navigation-v30" />
+    <link rel="stylesheet" href="./styles.css?v=20260711-manager-data-v31" />
   </head>
   <body>
     <section id="loginScreen" class="login-screen" hidden>
@@ -139,6 +139,36 @@
           <span class="soft-pill">不顯示公開個人排名</span>
         </div>
 
+        <section class="manager-data-workflow" aria-label="店長數據區">
+          <div class="section-heading manager-data-heading">
+            <h2>店長數據區</h2>
+            <span class="soft-pill">輸入 → 預覽 → 月榜</span>
+          </div>
+
+          <label id="managerDropZone" class="manager-drop-zone">
+            <input id="csvInput" class="visually-hidden" type="file" accept=".csv,text/csv,.txt,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" />
+            <span class="summon-kicker">步驟 1 · 輸入檔案位置</span>
+            <strong>選擇或拖入本月 Excel</strong>
+            <span id="managerSelectedFileName">尚未選擇檔案</span>
+          </label>
+
+          <form id="cloudImportForm" class="cloud-import-form" autocomplete="off">
+            <label>
+              <span>或輸入 Google Sheet ID</span>
+              <input id="cloudImportSheetId" name="spreadsheetId" type="text" placeholder="貼上已轉成 Google Sheet 的 ID" />
+            </label>
+            <div class="cloud-import-actions">
+              <button id="cloudPreviewBtn" class="secondary-button" type="button">預覽匯入</button>
+              <button id="cloudCommitBtn" class="primary-button" type="button" disabled>確認入帳</button>
+            </div>
+            <p id="cloudImportStatus" class="backup-status" aria-live="polite"></p>
+          </form>
+
+          <section id="managerMonthStatus" class="manager-month-status" aria-live="polite"></section>
+          <div class="manager-import-audit" id="managerImportAudit"></div>
+          <div class="manager-leaderboard" id="managerLeaderboard"></div>
+        </section>
+
         <div class="manager-grid">
           <article class="manager-card">
             <div class="team-topline">
@@ -234,37 +264,15 @@
           <p id="managerTestMetricsStatus" class="backup-status" aria-live="polite"></p>
         </section>
 
-        <label id="managerDropZone" class="manager-drop-zone">
-          <input id="csvInput" class="visually-hidden" type="file" accept=".csv,text/csv,.txt,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" />
-          <strong>拖移每日報表到這裡</strong>
-          <span>支援 .xlsx 與 HTML 型 .xls 的第一個分頁、CSV/TXT；也可貼 Google Sheet ID。</span>
-        </label>
-
-        <form id="cloudImportForm" class="cloud-import-form" autocomplete="off">
-          <label>
-            <span>雲端報表 Google Sheet ID</span>
-            <input id="cloudImportSheetId" name="spreadsheetId" type="text" placeholder="貼上已轉成 Google Sheet 的 ID" />
-          </label>
-          <div class="cloud-import-actions">
-            <button id="cloudPreviewBtn" class="secondary-button" type="button">預覽匯入</button>
-            <button id="cloudCommitBtn" class="primary-button" type="button" disabled>確認入帳</button>
-          </div>
-          <p id="cloudImportStatus" class="backup-status" aria-live="polite"></p>
-        </form>
-
-        <section id="managerMonthStatus" class="manager-month-status" aria-live="polite"></section>
-
         <div class="manager-status-grid">
           <div class="team-contribution" id="teamContribution"></div>
-          <div class="manager-import-audit" id="managerImportAudit"></div>
           <div class="manager-temporary-tasks" id="managerTemporaryTasks"></div>
-          <div class="manager-leaderboard" id="managerLeaderboard"></div>
           <div class="manager-tracking" id="managerTracking"></div>
           <div class="manager-collection" id="managerCollection"></div>
         </div>
       </section>
     </main>
 
-    <script src="./app.js?v=20260711-navigation-v30"></script>
+    <script src="./app.js?v=20260711-manager-data-v31"></script>
   </body>
 </html>

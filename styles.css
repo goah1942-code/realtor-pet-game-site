@@ -2717,6 +2717,30 @@ h3 {
   padding: 18px;
 }
 
+.manager-data-workflow {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7f9fb;
+}
+
+.manager-data-heading {
+  margin: 0;
+}
+
+.manager-data-workflow .manager-drop-zone,
+.manager-data-workflow .cloud-import-form,
+.manager-data-workflow .manager-month-status {
+  margin-top: 0;
+}
+
+.manager-data-workflow .manager-card {
+  background: #ffffff;
+}
+
 .manager-version {
   display: inline-block;
   margin-left: 6px;
@@ -2899,8 +2923,6 @@ h3 {
   min-width: 0;
 }
 
-.manager-leaderboard,
-.manager-import-audit,
 .manager-collection {
   grid-column: 1 / -1;
 }
