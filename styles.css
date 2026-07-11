@@ -2751,6 +2751,34 @@ body.is-manager-mode .app-shell {
   background: #ffffff;
 }
 
+.manager-period-picker {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 220px) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.manager-period-picker input {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  font: inherit;
+}
+
+.manager-period-picker small {
+  line-height: 1.45;
+}
+
 .manager-version {
   display: inline-block;
   margin-left: 6px;
@@ -2985,12 +3013,12 @@ body.is-manager-mode .app-shell {
 .audit-table {
   display: grid;
   gap: 6px;
-  min-width: 980px;
+  min-width: 1140px;
 }
 
 .audit-row {
   display: grid;
-  grid-template-columns: minmax(92px, 1.2fr) 72px repeat(11, 68px);
+  grid-template-columns: minmax(92px, 1.2fr) 72px repeat(13, 68px);
   gap: 8px;
   align-items: center;
   min-height: 34px;
@@ -3000,6 +3028,38 @@ body.is-manager-mode .app-shell {
   color: var(--ink);
   font-size: 13px;
   font-weight: 800;
+}
+
+.manager-game-table {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  min-width: 900px;
+}
+
+.manager-game-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 1.2fr) 76px 82px repeat(4, 72px) 82px 74px minmax(110px, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: #f7f9fb;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.manager-game-row span {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.manager-game-head {
+  background: #edf3f6;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .audit-row span {
@@ -3588,6 +3648,10 @@ body:not(.is-manager-mode) .manager-dashboard {
 }
 
 @media (max-width: 390px) {
+  .manager-period-picker {
+    grid-template-columns: 1fr;
+  }
+
   .hero-band {
     grid-template-columns: 1fr;
     grid-template-areas: "entry";

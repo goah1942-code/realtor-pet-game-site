@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v33";
+const APP_VERSION = "v34";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -2269,6 +2269,7 @@ function createInitialState() {
       cloudDashboard: null,
       cloudImportPreview: null,
       selectedImportFile: "",
+      dashboardPeriod: currentPeriodKey(),
       testResetBusy: false,
       testResetStatus: "",
       testResetTone: "",
@@ -2676,10 +2677,17 @@ function applyCloudManagerDashboard(data = {}) {
   return true;
 }
 
+function managerDashboardPeriod() {
+  const value = String(state.manager.dashboardPeriod || "").trim();
+  return /^\d{4}-\d{2}$/.test(value) ? value : currentPeriodKey();
+}
+
 function managerDashboardFromCommittedPreview(preview = {}, commit = {}) {
   const previewRows = Array.isArray(preview.player_previews) ? preview.player_previews : [];
   const period = preview.period || previewRows[0]?.report_period || state.manager.lastImport?.period || currentPeriodKey();
   const confirmedAt = new Date().toISOString();
+  const previousPlayers = Array.isArray(state.manager.cloudDashboard?.players) ? state.manager.cloudDashboard.players : [];
+  const previousByUid = new Map(previousPlayers.map((row) => [String(row.uid || row.employee_id || ""), row]));
   return {
     ...(isPlainObject(state.manager.cloudDashboard) ? state.manager.cloudDashboard : {}),
     period,
@@ -2691,15 +2699,19 @@ function managerDashboardFromCommittedPreview(preview = {}, commit = {}) {
       confirmed_at: confirmedAt,
       warning_count: Array.isArray(preview.warnings) ? preview.warnings.length : 0,
     },
-    players: previewRows.map((row) => ({
-      uid: cleanProfileText(row.uid || "", "", 24),
-      agent_name: row.report_name || row.agent_name || row.uid || "同仁",
-      report_period: row.report_period || period,
-      source_metrics: row.current_source_metrics || row.source_metrics || {},
-      delta_metrics_latest: {},
-      event_basis: row.event_basis || {},
-      updated_at: confirmedAt,
-    })),
+    players: previewRows.map((row) => {
+      const uid = cleanProfileText(row.uid || "", "", 24);
+      return {
+        ...(previousByUid.get(uid) || {}),
+        uid,
+        agent_name: row.report_name || row.agent_name || row.uid || "同仁",
+        report_period: row.report_period || period,
+        source_metrics: row.current_source_metrics || row.source_metrics || {},
+        delta_metrics_latest: {},
+        event_basis: row.event_basis || {},
+        updated_at: confirmedAt,
+      };
+    }),
   };
 }
 
@@ -2786,8 +2798,8 @@ function mockCloudEnvelope(action, payload = {}) {
           previous: { file_name: `${period}_previous_行程質量統計.xlsx`, file_hash: "sha256:mock-previous" },
         },
         players: [
-          { uid: "490326", agent_name: "蔡晉豪", event_basis: { monthly_policy_development_plus_showing: 6, bcd_valid: 7 }, source_metrics: SAMPLE_METRICS, draw_points_balance: 8, collection_count: 2, updated_at: new Date().toISOString() },
-          { uid: "490101", agent_name: "示範同仁A", event_basis: { monthly_policy_development_plus_showing: 12, bcd_valid: 5 }, source_metrics: { ...SAMPLE_METRICS, listing: 2, contract: 1, showing: 5 }, draw_points_balance: 4, collection_count: 4, updated_at: new Date().toISOString() },
+          { uid: "490326", agent_name: "蔡晉豪", event_basis: { valid_days: 4, e_total_daily_average: 4, e_daily_target_met: true, monthly_policy_development_plus_showing: 6, bcd_valid: 7 }, source_metrics: SAMPLE_METRICS, draw_points_balance: 8, tickets: { general: 6, boosted: 2, result: 3, blessing: 0 }, guaranteed_draws: { development: 1, showing: 0, listing: 0, contract: 0 }, collection_count: 2, latest_settlement_status: "changed", updated_at: new Date().toISOString() },
+          { uid: "490101", agent_name: "示範同仁A", event_basis: { valid_days: 5, e_total_daily_average: 3.6, e_daily_target_met: false, monthly_policy_development_plus_showing: 12, bcd_valid: 5 }, source_metrics: { ...SAMPLE_METRICS, listing: 2, contract: 1, showing: 5 }, draw_points_balance: 4, tickets: { general: 4, boosted: 1, result: 2, blessing: 1 }, guaranteed_draws: { development: 0, showing: 1, listing: 0, contract: 1 }, collection_count: 4, latest_settlement_status: "first_import", updated_at: new Date().toISOString() },
         ],
         manager_test_player: {
           uid: "293127",
@@ -3009,7 +3021,7 @@ async function loadCloudState() {
       return false;
     }
     const params = MANAGER_MODE
-      ? { period: currentPeriodKey(), manager_key: managerKey }
+      ? { period: managerDashboardPeriod(), manager_key: managerKey }
       : { uid: PROFILE.employeeId || PROFILE.userKey, period: currentPeriodKey() };
     if (!MANAGER_MODE && PROFILE.loginRequired) return false;
     const data = cloudEnvelopeData(await fetchCloudEnvelope(action, params), action);
@@ -3099,13 +3111,15 @@ async function previewCloudImport() {
     const envelope = await postCloudEnvelope("uploadImport", {
       mode: "preview",
       manager_key: managerKey,
-      operating_period: currentPeriodKey(),
+      operating_period: managerDashboardPeriod(),
       source_kind: "google_sheet_id",
       spreadsheet_id: spreadsheetId,
       file_name: "店長匯入 Google Sheet",
     });
     const data = cloudEnvelopeData(envelope, "uploadImport");
     if (!data || !data.import_id) throw new Error(envelope?.errors?.[0]?.message || "preview missing import_id");
+    const previewPeriod = data.period || data.periods?.[0] || data.player_previews?.[0]?.report_period;
+    if (/^\d{4}-\d{2}$/.test(String(previewPeriod || ""))) state.manager.dashboardPeriod = String(previewPeriod);
     state.manager.cloudImportPreview = data;
     state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-uploadImport-preview" : "cloud-uploadImport-preview";
     saveState();
@@ -3167,6 +3181,7 @@ async function previewCloudExcelFile(file) {
     });
     const data = cloudEnvelopeData(envelope, "uploadParsedImport");
     if (!data || !data.import_id) throw new Error(envelope?.errors?.[0]?.message || "Excel preview missing import_id");
+    state.manager.dashboardPeriod = parsed.period;
     state.manager.cloudImportPreview = data;
     state.manager.cloudStatus = "cloud-uploadParsedImport-preview";
     state.manager.warnings = parsed.warnings;
@@ -3550,12 +3565,14 @@ async function commitCloudImport() {
     });
     const data = cloudEnvelopeData(envelope, "uploadImport");
     if (!data || !data.status) throw new Error(envelope?.errors?.[0]?.message || "commit missing status");
+    const committedPeriod = preview.player_previews?.[0]?.report_period || preview.period || preview.periods?.[0] || managerDashboardPeriod();
+    if (/^\d{4}-\d{2}$/.test(String(committedPeriod || ""))) state.manager.dashboardPeriod = String(committedPeriod);
     state.manager.cloudDashboard = managerDashboardFromCommittedPreview(preview, data);
     state.manager.cloudImportPreview = null;
     state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-uploadImport-commit" : "cloud-uploadImport-commit";
     state.manager.lastImport = {
       at: new Date().toISOString(),
-      period: currentPeriodKey(),
+      period: state.manager.dashboardPeriod,
       source: data.import_id || "cloud",
       rows: data.committed_rows || 0,
     };
@@ -6853,9 +6870,9 @@ function collectionCountsByStoryline() {
 }
 
 function managerLeaderboardRows() {
-  const previewRows = state.manager.cloudImportPreview?.player_previews;
-  if (Array.isArray(previewRows) && previewRows.length) {
-    return managerAuditRows().map((row) => ({
+  const auditRows = managerAuditRows();
+  if (auditRows.length) {
+    return auditRows.map((row) => ({
       agent: row.name,
       employeeId: row.uid,
       branch: PROFILE.branch,
@@ -6867,34 +6884,8 @@ function managerLeaderboardRows() {
       contract: normalizeMetricValue(row.contract),
       showing: normalizeMetricValue(row.showing),
       calls: normalizeMetricValue(row.calls),
-      source: "preview",
+      source: row.source,
     })).sort((left, right) =>
-      right.monthlyDevelopmentShowing - left.monthlyDevelopmentShowing ||
-      right.contract - left.contract ||
-      right.listing - left.listing ||
-      right.showing - left.showing ||
-      String(left.employeeId).localeCompare(String(right.employeeId), "zh-Hant")
-    );
-  }
-  const cloudPlayers = state.manager.cloudDashboard?.players;
-  if (Array.isArray(cloudPlayers) && cloudPlayers.length) {
-    return cloudPlayers.map((row) => {
-      const metrics = normalizeGameMetrics(row.source_metrics || row.sourceMetrics || {});
-      const basis = isPlainObject(row.event_basis) ? row.event_basis : {};
-      return {
-        agent: row.agent_name || row.agent || row.report_name || row.uid || "同仁",
-        employeeId: row.uid || row.employee_id || "",
-        branch: row.branch || PROFILE.branch,
-        monthlyDevelopmentShowing: normalizeMetricValue(basis.monthly_policy_development_plus_showing || row.monthlyDevelopmentShowing || 0),
-        highValueEffective: normalizeMetricValue(basis.bcd_valid || row.highValueEffective || 0),
-        eTotal: normalizeMetricValue(basis.e_total || row.eTotal || 0),
-        listing: normalizeMetricValue(metrics.listing || row.listing || 0),
-        meeting: normalizeMetricValue(metrics.meeting || row.meeting || 0),
-        contract: normalizeMetricValue(metrics.contract || row.contract || 0),
-        showing: normalizeMetricValue(metrics.showing || row.showing || 0),
-        calls: normalizeMetricValue(metrics.calls || row.calls || 0),
-      };
-    }).sort((left, right) =>
       right.monthlyDevelopmentShowing - left.monthlyDevelopmentShowing ||
       right.contract - left.contract ||
       right.listing - left.listing ||
@@ -7008,6 +6999,9 @@ function managerAuditRows() {
         eValid: normalizeMetricValue(basis.e_valid ?? metricPairValue(metrics, "e_total_group")),
         eTotal: normalizeMetricValue(basis.e_total ?? metricPairValue(metrics, "e_total_group", "total")),
         calls: normalizeMetricValue(basis.calls ?? metricPairValue(metrics, "calls")),
+        validDays: normalizeMetricValue(basis.valid_days ?? metricPairValue(metrics, "effective_days")),
+        dailyAverage: normalizeMetricValue(basis.e_total_daily_average),
+        dailyTargetMet: Boolean(basis.e_daily_target_met),
         monthlyDevelopmentShowing: normalizeMetricValue(basis.monthly_policy_development_plus_showing ?? metricPairValue(metrics, "b_development_total") + metricPairValue(metrics, "d_showing_group")),
         highValueEffective: normalizeMetricValue(basis.bcd_valid),
         listing: metricPairValue(metrics, "listing") + metricPairValue(metrics, "rent_listing"),
@@ -7034,6 +7028,9 @@ function managerAuditRows() {
         eValid: normalizeMetricValue(basis.e_valid ?? metricPairValue(metrics, "e_total_group")),
         eTotal: normalizeMetricValue(basis.e_total ?? metricPairValue(metrics, "e_total_group", "total")),
         calls: normalizeMetricValue(basis.calls ?? metricPairValue(metrics, "calls")),
+        validDays: normalizeMetricValue(basis.valid_days ?? metricPairValue(metrics, "effective_days")),
+        dailyAverage: normalizeMetricValue(basis.e_total_daily_average),
+        dailyTargetMet: Boolean(basis.e_daily_target_met),
         monthlyDevelopmentShowing: normalizeMetricValue(basis.monthly_policy_development_plus_showing ?? metricPairValue(metrics, "b_development_total") + metricPairValue(metrics, "d_showing_group")),
         highValueEffective: normalizeMetricValue(basis.bcd_valid),
         listing: metricPairValue(metrics, "listing") + metricPairValue(metrics, "rent_listing"),
@@ -7079,12 +7076,13 @@ function renderManagerMonthStatus() {
   const isPreview = Boolean(state.manager.cloudImportPreview?.import_id);
   const dashboard = state.manager.cloudDashboard || {};
   const latestImport = dashboard.latest_import || {};
-  const period = rows[0]?.period || state.manager.cloudImportPreview?.period || dashboard.period || currentPeriodKey();
+  const period = rows[0]?.period || state.manager.cloudImportPreview?.period || dashboard.period || managerDashboardPeriod();
+  const hasPublishedImport = Boolean(latestImport.import_id && String(latestImport.status || "").toUpperCase() === "PUBLISHED");
   const totals = managerAuditTotals(rows);
-  const statusLabel = isPreview ? "預覽中，尚未入帳" : rows.length ? "本月已入帳" : "尚未匯入";
+  const statusLabel = isPreview ? "預覽中，尚未入帳" : hasPublishedImport ? "本月已入帳" : "本月尚未入帳";
   const statusDetail = isPreview
     ? "請先核對下方逐人數據，再按確認入帳；此時同仁端尚未更新。"
-    : rows.length
+    : hasPublishedImport
       ? `最近確認：${formatManagerImportTime(latestImport.confirmed_at || state.manager.lastImport?.at)}`
       : "匯入 Excel 並確認入帳後，這裡會保留本月最新累積。";
   const metrics = [
@@ -7120,7 +7118,9 @@ function renderManagerImportAudit() {
   const target = document.getElementById("managerImportAudit");
   if (!target) return;
   const rows = managerAuditRows();
-  const modeLabel = state.manager.cloudImportPreview?.import_id ? "預覽資料（尚未入帳）" : rows.length ? "已入帳資料" : "尚無資料";
+  const latestImport = state.manager.cloudDashboard?.latest_import || {};
+  const hasPublishedImport = Boolean(latestImport.import_id && String(latestImport.status || "").toUpperCase() === "PUBLISHED");
+  const modeLabel = state.manager.cloudImportPreview?.import_id ? "預覽資料（尚未入帳）" : hasPublishedImport ? "已入帳資料" : "本月尚無已入帳資料";
   target.innerHTML = `
     <article class="manager-card">
       <span class="summon-kicker">步驟 2 · 預覽輸入數據</span>
@@ -7130,6 +7130,7 @@ function renderManagerImportAudit() {
           <div class="audit-row audit-head" role="row">
             <span>人名</span>
             <span>員編</span>
+            <span>有效天</span>
             <span>社區服務</span>
             <span>拜訪</span>
             <span>回報</span>
@@ -7137,6 +7138,7 @@ function renderManagerImportAudit() {
             <span>銷售</span>
             <span>E 有效</span>
             <span>E 全部</span>
+            <span>日均全部</span>
             <span>F 電話</span>
             <span>委託</span>
             <span>見面談</span>
@@ -7146,6 +7148,7 @@ function renderManagerImportAudit() {
             <div class="audit-row" role="row">
               <span>${escapeHtml(row.name)}</span>
               <span>${escapeHtml(String(row.uid))}</span>
+              <span>${formatMetricValue(row.validDays)}</span>
               <span>${formatMetricValue(row.area)}</span>
               <span>${formatMetricValue(row.development)}</span>
               <span>${formatMetricValue(row.negotiation)}</span>
@@ -7153,6 +7156,7 @@ function renderManagerImportAudit() {
               <span>${formatMetricValue(row.sales)}</span>
               <span>${formatMetricValue(row.eValid)}</span>
               <span>${formatMetricValue(row.eTotal)}</span>
+              <span>${formatMetricValue(row.dailyAverage)}${row.dailyTargetMet ? " ✓" : ""}</span>
               <span>${formatMetricValue(row.calls)}</span>
               <span>${formatMetricValue(row.listing)}</span>
               <span>${formatMetricValue(row.meeting)}</span>
@@ -7166,6 +7170,63 @@ function renderManagerImportAudit() {
       <p class="small-text">這張表是本月目前累積的逐人明細；A-F 依目前報表欄位解析。預覽時請確認無誤後再按「確認入帳」。</p>
     </article>
   `;
+}
+
+function managerGameProgressRows() {
+  const players = state.manager.cloudDashboard?.players;
+  if (!Array.isArray(players)) return [];
+  return players.map((row) => {
+    const tickets = isPlainObject(row.tickets) ? row.tickets : {};
+    const guaranteed = isPlainObject(row.guaranteed_draws) ? row.guaranteed_draws : {};
+    return {
+      name: row.agent_name || row.report_name || row.uid || "同仁",
+      uid: row.uid || "",
+      workPoints: normalizeMetricValue(row.draw_points_balance),
+      general: normalizeMetricValue(tickets.general),
+      boosted: normalizeMetricValue(tickets.boosted),
+      result: normalizeMetricValue(tickets.result),
+      blessing: normalizeMetricValue(tickets.blessing),
+      guaranteed: Object.values(guaranteed).reduce((sum, value) => sum + normalizeMetricValue(value), 0),
+      collection: normalizeMetricValue(row.collection_count),
+      settlement: row.latest_settlement_status || "empty",
+    };
+  });
+}
+
+function managerSettlementLabel(status) {
+  return ({ first_import: "首次入帳", changed: "已補差額", no_change: "無新差額", empty: "尚未入帳" })[status] || status || "尚未入帳";
+}
+
+function renderManagerPlayerGameStatus() {
+  const target = document.getElementById("managerPlayerGameStatus");
+  if (!target) return;
+  const rows = managerGameProgressRows();
+  const latestImport = state.manager.cloudDashboard?.latest_import || {};
+  const hasPublishedImport = Boolean(latestImport.import_id && String(latestImport.status || "").toUpperCase() === "PUBLISHED");
+  target.innerHTML = `
+    <article class="manager-card">
+      <span class="summon-kicker">入帳後同仁遊戲狀態</span>
+      <strong>${escapeHtml(managerDashboardPeriod())} · ${hasPublishedImport ? "同仁端已同步" : "尚未有本月正式入帳"}</strong>
+      <div class="audit-table-wrap">
+        <div class="manager-game-table" role="table" aria-label="同仁遊戲進度表">
+          <div class="manager-game-row manager-game-head" role="row">
+            <span>人名</span><span>員編</span><span>工作點數</span><span>一般券</span><span>強化券</span><span>成果券</span><span>祝福券</span><span>保證抽</span><span>寵物種數</span><span>最近入帳</span>
+          </div>
+          ${rows.map((row) => `
+            <div class="manager-game-row" role="row">
+              <span>${escapeHtml(row.name)}</span><span>${escapeHtml(String(row.uid))}</span><span>${formatMetricValue(row.workPoints)}</span><span>${formatMetricValue(row.general)}</span><span>${formatMetricValue(row.boosted)}</span><span>${formatMetricValue(row.result)}</span><span>${formatMetricValue(row.blessing)}</span><span>${formatMetricValue(row.guaranteed)}</span><span>${formatMetricValue(row.collection)}</span><span>${escapeHtml(managerSettlementLabel(row.settlement))}</span>
+            </div>
+          `).join("") || `<div class="audit-empty">入帳後會在這裡顯示每位同仁的遊戲資源。</div>`}
+        </div>
+      </div>
+      <p class="small-text">工作點數、抽卡券、保證抽與寵物種數都來自同一份雲端 playerState；月榜只重算當月工作數據。</p>
+    </article>
+  `;
+}
+
+function renderManagerPeriodPicker() {
+  const input = document.getElementById("managerDataPeriod");
+  if (input && input.value !== managerDashboardPeriod()) input.value = managerDashboardPeriod();
 }
 
 function renderManagerTemporaryTasks() {
@@ -7394,8 +7455,10 @@ function renderManagerDashboard() {
 
   renderManagerTemporaryTasks();
   renderManagerImportSource();
+  renderManagerPeriodPicker();
   renderManagerMonthStatus();
   renderManagerImportAudit();
+  renderManagerPlayerGameStatus();
   renderManagerLeaderboard();
   renderManagerResetTools();
   renderManagerTestMetrics();
@@ -7887,6 +7950,18 @@ document.getElementById("backupInput").addEventListener("change", (event) => {
 document.getElementById("managerTestMetricsForm")?.addEventListener("submit", (event) => {
   event.preventDefault();
   saveManagerTestMetrics(event.currentTarget);
+});
+
+document.getElementById("managerDataPeriod")?.addEventListener("change", async (event) => {
+  const period = String(event.currentTarget.value || "");
+  if (!/^\d{4}-\d{2}$/.test(period)) return;
+  state.manager.dashboardPeriod = period;
+  state.manager.cloudImportPreview = null;
+  saveState();
+  render();
+  setCloudImportStatus(`正在讀取 ${period} 的已入帳資料...`);
+  const loaded = await loadCloudState();
+  setCloudImportStatus(loaded ? `已切換到 ${period}` : `${period} 尚未有可顯示的正式入帳`, loaded ? "good" : "");
 });
 
 document.getElementById("employeeLoginForm")?.addEventListener("submit", (event) => {

@@ -24,7 +24,7 @@
     <link rel="icon" href="./assets/app-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./assets/app-icon-512.png" />
     <link rel="manifest" href="./site.webmanifest" />
-    <link rel="stylesheet" href="./styles.css?v=20260711-commit-board-v33" />
+    <link rel="stylesheet" href="./styles.css?v=20260711-monthly-source-v34" />
   </head>
   <body>
     <section id="loginScreen" class="login-screen" hidden>
@@ -145,6 +145,12 @@
             <span class="soft-pill">輸入 → 預覽 → 月榜</span>
           </div>
 
+          <label class="manager-period-picker" for="managerDataPeriod">
+            <span>查看月份</span>
+            <input id="managerDataPeriod" type="month" />
+            <small>月榜與同仁工作數據依這個月份重新計算；實際匯入月份仍以 Excel 第一分頁為準。</small>
+          </label>
+
           <label id="managerDropZone" class="manager-drop-zone">
             <input id="csvInput" class="visually-hidden" type="file" accept=".csv,text/csv,.txt,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" />
             <span class="summon-kicker">步驟 1 · 輸入檔案位置</span>
@@ -166,6 +172,7 @@
 
           <section id="managerMonthStatus" class="manager-month-status" aria-live="polite"></section>
           <div class="manager-import-audit" id="managerImportAudit"></div>
+          <div class="manager-player-game-status" id="managerPlayerGameStatus"></div>
           <div class="manager-leaderboard" id="managerLeaderboard"></div>
         </section>
 
@@ -273,6 +280,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=20260711-commit-board-v33"></script>
+    <script src="./app.js?v=20260711-monthly-source-v34"></script>
   </body>
 </html>
