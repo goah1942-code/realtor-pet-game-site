@@ -5432,7 +5432,7 @@ function renderDrawRevealResult() {
   const target = document.getElementById("drawRevealContent");
   if (!overlay || overlay.hidden || !target) return;
   const lastDraw = state.history.find((item) => item.type === "draw");
-  const pet = lastDraw ? getPet(lastDraw.petId) : null;
+  const pet = lastDraw ? (getPet(lastDraw.petId) || lastDraw.petSnapshot) : null;
   if (!lastDraw || !pet) return;
   const owned = getOwned(pet.pet_id);
   const tone = drawOutcomeTone(lastDraw, pet);
@@ -5566,6 +5566,7 @@ function revealPreparedCloudDraw(pool, entry) {
     type: "draw",
     at: new Date().toISOString(),
     petId: pet.pet_id,
+    petSnapshot: { ...pet },
     text: `${pool.name} ${label}`,
     assistText: activePetAssistText(),
     poolKey: entry.pool,
@@ -5636,6 +5637,7 @@ async function drawCloud(poolKey, preparedEntry = null) {
       type: "draw",
       at: new Date().toISOString(),
       petId: data.pet.pet_id,
+      petSnapshot: { ...pet },
       text: `${pool.name} 抽到 ${pet.name || data.pet.pet_id}，${resultText}`,
       assistText: activePetAssistText(),
       poolKey,
@@ -6628,7 +6630,11 @@ function renderDrawResult() {
     target.innerHTML = "";
     return;
   }
-  const pet = getPet(lastDraw.petId);
+  const pet = getPet(lastDraw.petId) || lastDraw.petSnapshot;
+  if (!pet) {
+    target.innerHTML = "";
+    return;
+  }
   const flavor = petFlavorText(pet);
   const owned = pet ? getOwned(pet.pet_id) : null;
   const tone = drawOutcomeTone(lastDraw, pet);
