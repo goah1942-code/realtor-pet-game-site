@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v46";
+const APP_VERSION = "v47";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -230,12 +230,34 @@ const MATERIAL_DISPLAY_ORDER = [
 const STORYLINE_ESSENCE_LABELS = {
   area: "商圈精華",
   development: "開拓精華",
-  call: "電之精華",
+  call: "信號精華",
   negotiation: "議價精華",
   showing: "銷售精華",
   listing: "信任精華",
   offer: "斡旋精華",
   contract: "契約精華",
+};
+const ESSENCE_ART = {
+  development: {
+    image: "assets/essences/development_essence.webp",
+    thumbnail: "assets/essences/development_essence-thumb.webp",
+  },
+  call: {
+    image: "assets/essences/call_essence.webp",
+    thumbnail: "assets/essences/call_essence-thumb.webp",
+  },
+  showing: {
+    image: "assets/essences/showing_essence.webp",
+    thumbnail: "assets/essences/showing_essence-thumb.webp",
+  },
+  listing: {
+    image: "assets/essences/listing_essence.webp",
+    thumbnail: "assets/essences/listing_essence-thumb.webp",
+  },
+  contract: {
+    image: "assets/essences/contract_essence.webp",
+    thumbnail: "assets/essences/contract_essence-thumb.webp",
+  },
 };
 const HATCH_ESSENCE_COST = 9;
 const STAR_SOUL_ESSENCE_REWARD = 3;
@@ -3859,6 +3881,45 @@ function essenceLabelForStoryline(storylineId = "") {
   return STORYLINE_ESSENCE_LABELS[key] || `${fallbackStorylineName(storylineId)}精華`;
 }
 
+function essenceResourceKey(value = "", pet = null) {
+  const raw = String(value || "").replace(/_essence$/, "");
+  if (ESSENCE_ART[raw]) return raw;
+  const fromValue = storylineResourceKey(raw);
+  if (ESSENCE_ART[fromValue]) return fromValue;
+  const fromPet = storylineResourceKey(pet?.storyline_id || "");
+  return ESSENCE_ART[fromPet] ? fromPet : "development";
+}
+
+function essenceImageUrl(resourceKey, size = "small") {
+  const art = ESSENCE_ART[essenceResourceKey(resourceKey)];
+  return size === "small" ? art?.thumbnail || art?.image || "" : art?.image || art?.thumbnail || "";
+}
+
+function essenceLabelForResource(resourceKey, pet = null) {
+  const key = essenceResourceKey(resourceKey, pet);
+  return STORYLINE_ESSENCE_LABELS[key] || essenceLabelForStoryline(pet?.storyline_id || key);
+}
+
+function isEssenceDraw(draw) {
+  return draw?.outcomeKind === "essence" || draw?.outcomeKind === "essence_conversion";
+}
+
+function essenceVisual(draw, pet, size = "small") {
+  const key = essenceResourceKey(draw?.essenceKey || draw?.resourceKey || pet?.storyline_id, pet);
+  const imageUrl = essenceImageUrl(key, size);
+  const label = draw?.essenceLabel || draw?.resourceLabel || essenceLabelForResource(key, pet);
+  return `
+    <div class="pet-art-frame pet-art-${size} essence-art-frame" data-essence="${escapeHtml(key)}">
+      <img class="pet-art-image" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(label)}" loading="lazy" decoding="async">
+    </div>
+  `;
+}
+
+function drawPrimaryLabel(draw, pet) {
+  if (isEssenceDraw(draw)) return draw?.essenceLabel || draw?.resourceLabel || essenceLabelForResource(draw?.essenceKey, pet);
+  return pet?.name || "抽卡結果";
+}
+
 function eggLabel(pet) {
   return `${pet?.name || "寵物"}蛋`;
 }
@@ -5531,7 +5592,7 @@ function renderDrawRevealResult() {
   if (!lastDraw || !pet) return;
   const owned = getOwned(pet.pet_id);
   const tone = drawOutcomeTone(lastDraw, pet);
-  const flavor = petFlavorText(pet);
+  const flavor = isEssenceDraw(lastDraw) ? "" : petFlavorText(pet);
   const summary = drawResultSummaryText(lastDraw, pet);
   const syncText = lastDraw.syncError
     ? "結果已保留，雲端確認失敗，請保持網路後重新開啟。"
@@ -5543,8 +5604,8 @@ function renderDrawRevealResult() {
       <span class="summon-kicker">抽卡結果</span>
       <div class="draw-reveal-visual">${drawResultVisual(pet, owned, lastDraw, "large")}</div>
       <div class="pet-name-row draw-reveal-name">
-        <h2>${escapeHtml(pet.name)}</h2>
-        <span class="rarity-badge rarity-${escapeHtml(pet.rarity)}">${escapeHtml(pet.rarity)}</span>
+        <h2>${escapeHtml(drawPrimaryLabel(lastDraw, pet))}</h2>
+        ${isEssenceDraw(lastDraw) ? "" : `<span class="rarity-badge rarity-${escapeHtml(pet.rarity)}">${escapeHtml(pet.rarity)}</span>`}
       </div>
       <strong class="draw-reveal-outcome">${escapeHtml(drawOutcomeLabel(lastDraw, pet))}</strong>
       ${flavor ? `<p class="pet-flavor">「${escapeHtml(flavor)}」</p>` : ""}
@@ -6553,8 +6614,8 @@ function buildPoolInlineDrawResult(pool) {
       <div class="pool-inline-main">
         <div class="mini-pet">${drawResultVisual(pet, owned, drawResult, "small")}</div>
         <div>
-          <strong>${escapeHtml(pet.name)}</strong>
-          <span class="rarity-badge rarity-${pet.rarity}">${escapeHtml(pet.rarity)}</span>
+          <strong>${escapeHtml(drawPrimaryLabel(drawResult, pet))}</strong>
+          ${isEssenceDraw(drawResult) ? "" : `<span class="rarity-badge rarity-${pet.rarity}">${escapeHtml(pet.rarity)}</span>`}
           <span class="collection-badge is-ready">${escapeHtml(outcome)}</span>
         </div>
       </div>
@@ -6926,7 +6987,7 @@ function renderDrawResult() {
     target.innerHTML = "";
     return;
   }
-  const flavor = petFlavorText(pet);
+  const flavor = isEssenceDraw(lastDraw) ? "" : petFlavorText(pet);
   const owned = pet ? getOwned(pet.pet_id) : null;
   const tone = drawOutcomeTone(lastDraw, pet);
   const nextAction = drawNextAction(lastDraw, pet, owned);
@@ -6939,12 +7000,12 @@ function renderDrawResult() {
   const workFollowup = drawWorkFollowupText();
   target.innerHTML = `
     <article class="draw-result-card draw-tone-${escapeHtml(tone)}">
-      <div class="mini-pet">${petVisual(pet, getOwned(pet.pet_id), "small")}</div>
+      <div class="mini-pet">${drawResultVisual(pet, getOwned(pet.pet_id), lastDraw, "large")}</div>
       <div>
         <span class="summon-kicker">抽卡結果</span>
         <div class="pet-name-row">
-          <h3>${pet.name}</h3>
-          <span class="rarity-badge rarity-${pet.rarity}">${pet.rarity}</span>
+          <h3>${escapeHtml(drawPrimaryLabel(lastDraw, pet))}</h3>
+          ${isEssenceDraw(lastDraw) ? "" : `<span class="rarity-badge rarity-${pet.rarity}">${pet.rarity}</span>`}
           <span class="collection-badge is-ready">${escapeHtml(drawOutcomeLabel(lastDraw, pet))}</span>
         </div>
         ${flavor ? `<p class="pet-flavor">「${escapeHtml(flavor)}」</p>` : ""}
@@ -6977,7 +7038,9 @@ function petFlavorText(pet) {
 function buildDrawShareText(draw = state.history.find((item) => item.type === "draw")) {
   if (!draw) return "";
   const pet = getPet(draw.petId);
-  const petText = pet ? `${pet.rarity} ${pet.name}` : "新夥伴";
+  const petText = isEssenceDraw(draw)
+    ? drawPrimaryLabel(draw, pet)
+    : pet ? `${pet.rarity} ${pet.name}` : "新夥伴";
   const subtitle = pet?.line_subtitle || pet?.card_effect_summary || "行程養寵物，成果拿覺醒素材。";
   const outcome = draw.outcomeKind === "egg"
     ? `拿到 ${eggLabel(pet)}，孵化又近一步。`
@@ -7189,11 +7252,27 @@ function essenceEntries() {
       const storyline = storylines.find((item) => storylineResourceKey(item.storyline_id) === resourceKey);
       return {
         key,
+        resourceKey,
         label: STORYLINE_ESSENCE_LABELS[resourceKey] || `${storyline?.name || resourceKey}精華`,
         amount: rewardCount(amount),
+        thumbnail: essenceImageUrl(resourceKey, "small"),
       };
     })
     .filter((item) => item.amount > 0);
+}
+
+function essenceInventoryMarkup(entries = []) {
+  if (!entries.length) return "";
+  return `
+    <div class="essence-inventory-list" aria-label="精華庫存">
+      ${entries.map((item) => `
+        <div class="essence-inventory-item">
+          <img src="${escapeHtml(item.thumbnail)}" alt="${escapeHtml(item.label)}" loading="lazy" decoding="async">
+          <span><strong>${escapeHtml(item.label)}</strong><small>${formatMetricValue(item.amount)} 個</small></span>
+        </div>
+      `).join("")}
+    </div>
+  `;
 }
 
 function soulExchangeMarkup() {
@@ -7256,6 +7335,7 @@ function renderInventoryBag() {
       detail: eggs.length ? eggs.slice(0, 3).map(({ pet, amount }) => `${eggLabel(pet)} ${amount}`).join(" · ") : "目前沒有寵物蛋",
       meta: essences.length ? essences.slice(0, 3).map((item) => `${item.label} ${item.amount}`).join(" · ") : "抽到精華後，可搭配同線寵物蛋孵化。",
       tone: "soft",
+      actions: essenceInventoryMarkup(essences),
     },
     {
       title: "收藏進度",
@@ -8410,6 +8490,7 @@ function petCollectionVisual(pet, owned, size) {
 }
 
 function drawResultVisual(pet, owned, draw, size) {
+  if (isEssenceDraw(draw)) return essenceVisual(draw, pet, size);
   if (draw?.outcomeKind === "egg" && eggImageUrl(pet, size)) return eggVisual(pet, size, true);
   return petVisual(pet, owned, size);
 }
