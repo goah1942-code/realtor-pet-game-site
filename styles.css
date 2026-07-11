@@ -2777,6 +2777,64 @@ body.draw-reveal-open {
   line-height: 1.35;
 }
 
+.pool-work-progress {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid rgba(31, 58, 86, 0.12);
+  border-radius: 8px;
+  background: #f7f9fb;
+}
+
+.pool-work-total,
+.pool-next-draw {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.pool-work-total {
+  color: var(--navy);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.pool-work-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.pool-work-stats span {
+  min-width: 0;
+  padding: 6px;
+  border-radius: 6px;
+  background: #fff;
+  text-align: center;
+}
+
+.pool-work-stats small,
+.pool-work-stats strong {
+  display: block;
+}
+
+.pool-work-stats small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.pool-work-stats strong {
+  margin-top: 2px;
+  color: var(--navy);
+  font-size: 13px;
+}
+
+.pool-next-draw {
+  color: #196b52;
+  font-size: 11px;
+  font-weight: 900;
+}
+
 .pool-unlock-progress {
   display: grid;
   gap: 5px;

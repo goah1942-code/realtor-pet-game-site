@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v47";
+const APP_VERSION = "v48";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -2302,6 +2302,11 @@ function createInitialState() {
   return {
     activePetId: "dev-001",
     tickets: { general: 3, visit: 0, showing: 0, result: 0, contract: 0 },
+    drawStats: {
+      earned: { general: 3, visit: 0, showing: 0, result: 0, contract: 0 },
+      drawn: { general: 0, visit: 0, showing: 0, result: 0, contract: 0 },
+      trackingStartedAt: "local",
+    },
     drawPoints: { report_points: 0, daily_free: 3, bonus_draw: 0, visit: 0, showing: 0, result: 0, contract: 0 },
     guaranteedDraws: { development: 0, showing: 0, listing: 0, contract: 0 },
     contractGuaranteeBatches: [],
@@ -2481,6 +2486,32 @@ function normalizeTicketBalances(tickets = {}, fallback = {}) {
   };
 }
 
+function emptyDrawStats() {
+  return {
+    earned: { general: 0, visit: 0, showing: 0, result: 0, contract: 0 },
+    drawn: { general: 0, visit: 0, showing: 0, result: 0, contract: 0 },
+    trackingStartedAt: "",
+  };
+}
+
+function normalizeDrawStats(drawStats = {}, ticketFallback = {}) {
+  const source = isPlainObject(drawStats) ? drawStats : {};
+  const fallback = normalizeTicketBalances(ticketFallback);
+  const hasTracking = Boolean(source.tracking_started_at || source.trackingStartedAt);
+  return {
+    earned: normalizeTicketBalances(source.earned, hasTracking ? {} : fallback),
+    drawn: normalizeTicketBalances(source.drawn),
+    trackingStartedAt: source.tracking_started_at || source.trackingStartedAt || "",
+  };
+}
+
+function recordDrawStats(type, poolKey, amount = 1) {
+  if (!POOLS.some((pool) => pool.key === poolKey)) return;
+  state.drawStats = normalizeDrawStats(state.drawStats, state.tickets);
+  state.drawStats[type][poolKey] = Math.max(0, Number(state.drawStats[type][poolKey] || 0) + Number(amount || 0));
+  if (!state.drawStats.trackingStartedAt) state.drawStats.trackingStartedAt = new Date().toISOString();
+}
+
 function normalizeDrawPity(drawPity = {}) {
   const source = isPlainObject(drawPity) ? drawPity : {};
   return Object.fromEntries(Object.keys(INTERNAL_PET_PITY_RULES).map((poolKey) => {
@@ -2496,6 +2527,7 @@ function normalizeImportedState(importedState) {
     ...initial,
     ...source,
     tickets: normalizeTicketBalances(source.tickets, initial.tickets),
+    drawStats: normalizeDrawStats(source.drawStats, source.tickets || initial.tickets),
     drawPoints: mergeObject(initial.drawPoints, source.drawPoints),
     guaranteedDraws: mergeObject(initial.guaranteedDraws, source.guaranteedDraws),
     contractGuaranteeBatches: Array.isArray(source.contractGuaranteeBatches) ? source.contractGuaranteeBatches.map((item) => ({ ...item })) : [],
@@ -2629,6 +2661,7 @@ function applyBackendEmployeeSnapshot(snapshot = {}) {
   applyCloudResetMarker(snapshot.lastResetAt);
   if (snapshot.replaceInventory) {
     if (isPlainObject(snapshot.tickets)) state.tickets = normalizeTicketBalances(snapshot.tickets);
+    if (isPlainObject(snapshot.drawStats)) state.drawStats = normalizeDrawStats(snapshot.drawStats, state.tickets);
     if (isPlainObject(snapshot.drawPoints)) state.drawPoints = { ...snapshot.drawPoints };
     if (isPlainObject(snapshot.guaranteedDraws)) state.guaranteedDraws = normalizeGuaranteedDraws(snapshot.guaranteedDraws);
     if (isPlainObject(snapshot.materials)) state.materials = { ...snapshot.materials };
@@ -2638,6 +2671,7 @@ function applyBackendEmployeeSnapshot(snapshot = {}) {
     if (isPlainObject(snapshot.collection)) state.collection = { ...snapshot.collection };
   } else {
     if (isPlainObject(snapshot.tickets)) state.tickets = normalizeTicketBalances(snapshot.tickets, state.tickets);
+    if (isPlainObject(snapshot.drawStats)) state.drawStats = normalizeDrawStats(snapshot.drawStats, state.tickets);
     if (isPlainObject(snapshot.drawPoints)) state.drawPoints = mergeObject(state.drawPoints, snapshot.drawPoints);
     if (isPlainObject(snapshot.guaranteedDraws)) state.guaranteedDraws = normalizeGuaranteedDraws(snapshot.guaranteedDraws);
     if (isPlainObject(snapshot.materials)) state.materials = mergeObject(state.materials, snapshot.materials);
@@ -2723,6 +2757,7 @@ function cloudPlayerStateToSnapshot(data = {}) {
     deltaMetrics: normalizePlayerSourceMetrics(data.latest_delta || data.delta_metrics || data.deltaMetrics || sourceMetrics),
     basis: data.event_basis || data.eventBasis || {},
     drawPoints: isPlainObject(resources.draw_points) ? resources.draw_points : {},
+    drawStats: isPlainObject(resources.draw_stats) ? resources.draw_stats : {},
     guaranteedDraws: normalizeGuaranteedDraws(resources.guaranteed_draws || resources.guaranteedDraws),
     contractGuaranteeBatches: Array.isArray(data.contract_guarantee_batches) ? data.contract_guarantee_batches : (Array.isArray(resources.contract_guarantee_batches) ? resources.contract_guarantee_batches : []),
     drawSession: isPlainObject(data.draw_session) ? data.draw_session : (isPlainObject(resources.draw_session) ? resources.draw_session : { session_id: "", entries: [] }),
@@ -3907,7 +3942,7 @@ function isEssenceDraw(draw) {
 function essenceVisual(draw, pet, size = "small") {
   const key = essenceResourceKey(draw?.essenceKey || draw?.resourceKey || pet?.storyline_id, pet);
   const imageUrl = essenceImageUrl(key, size);
-  const label = draw?.essenceLabel || draw?.resourceLabel || essenceLabelForResource(key, pet);
+  const label = essenceLabelForResource(key, pet);
   return `
     <div class="pet-art-frame pet-art-${size} essence-art-frame" data-essence="${escapeHtml(key)}">
       <img class="pet-art-image" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(label)}" loading="lazy" decoding="async">
@@ -3916,7 +3951,7 @@ function essenceVisual(draw, pet, size = "small") {
 }
 
 function drawPrimaryLabel(draw, pet) {
-  if (isEssenceDraw(draw)) return draw?.essenceLabel || draw?.resourceLabel || essenceLabelForResource(draw?.essenceKey, pet);
+  if (isEssenceDraw(draw)) return essenceLabelForResource(draw?.essenceKey || draw?.resourceKey, pet);
   return pet?.name || "抽卡結果";
 }
 
@@ -4843,6 +4878,90 @@ function poolExperienceCue(pool, candidates, unlocked) {
   return candidates.length ? `${progress.unlockText}，這裡就能抽。` : "卡池內容正在接入，先累積行程不會浪費。";
 }
 
+function poolWorkProgressValue(poolKey) {
+  const progress = state.progress || buildProgressSnapshot(state.metrics);
+  const basisPool = isPlainObject(progress.basis?.pool_progress) ? progress.basis.pool_progress : {};
+  const source = normalizeGameMetrics(progress.sourceMetrics || state.metrics);
+  const groups = progress.groups || createReportGroups();
+  const developmentValid = basisMetricOrFallback(progress.basis, ["development_seen_groups", "development_valid"], groups.development?.effective || source.development);
+  const developmentTotal = basisMetricOrFallback(progress.basis, ["development_total_groups"], groups.development?.total || developmentValid);
+  const areaTotal = basisMetricOrFallback(progress.basis, ["area_total_groups"], groups.area?.total || source.area);
+  const fallback = {
+    general: source.calls / 15,
+    visit: developmentValid + Math.max(0, developmentTotal - developmentValid) * 0.3 + areaTotal / 2,
+    showing: basisMetricOrFallback(progress.basis, ["showing_groups"], source.showing),
+    result: source.listing + source.offer + source.meeting,
+    contract: source.meeting / 2 + source.contract / 0.1,
+  };
+  const basisKey = {
+    general: "general_phone",
+    visit: "visit",
+    showing: "showing",
+    result: "result",
+    contract: "contract",
+  }[poolKey];
+  return preciseMetricOrFallback(basisPool, [basisKey], fallback[poolKey] || 0);
+}
+
+function poolWorkProgressDetails(poolKey) {
+  const progress = state.progress || buildProgressSnapshot(state.metrics);
+  const source = normalizeGameMetrics(progress.sourceMetrics || state.metrics);
+  const groups = progress.groups || createReportGroups();
+  const developmentValid = basisMetricOrFallback(progress.basis, ["development_seen_groups", "development_valid"], groups.development?.effective || source.development);
+  const developmentTotal = basisMetricOrFallback(progress.basis, ["development_total_groups"], groups.development?.total || developmentValid);
+  const areaTotal = basisMetricOrFallback(progress.basis, ["area_total_groups"], groups.area?.total || source.area);
+  const showing = basisMetricOrFallback(progress.basis, ["showing_groups"], source.showing);
+  const value = poolWorkProgressValue(poolKey);
+  const remainder = Math.max(0, value - Math.floor(value + 0.000000001));
+  const nextPercent = Math.round(remainder * 100);
+  const details = {
+    general: {
+      total: `本月累積電話 ${formatMetricValue(source.calls)} 通`,
+      next: `再 ${formatMetricValue(15 - (source.calls % 15 || 0))} 通電話，可增加 1 抽`,
+    },
+    visit: {
+      total: `本月累積拜訪：有效 ${formatMetricValue(developmentValid)} 組／全部 ${formatMetricValue(developmentTotal)} 組 · 社區服務 ${formatMetricValue(areaTotal)} 組`,
+      next: "再 1 組有效拜訪，可增加 1 抽",
+    },
+    showing: {
+      total: `本月累積帶看 ${formatMetricValue(showing)} 組`,
+      next: "再 1 組帶看，可增加 1 抽",
+    },
+    result: {
+      total: `本月累積成果：委託 ${formatMetricValue(source.listing)} 件 · 斡旋／要約／送訂 ${formatMetricValue(source.offer + source.meeting)} 件`,
+      next: "再 1 件委託、斡旋／要約或送訂，可增加 1 抽",
+    },
+    contract: {
+      total: `本月累積：見面談 ${formatMetricValue(source.meeting)} 次 · 成交 ${formatMetricValue(source.contract)} 件`,
+      next: `再 ${formatMetricValue(2 - (source.meeting % 2 || 0))} 次見面談可增加 1 抽；成交每增加 0.1 件也增加 1 抽`,
+    },
+  };
+  return { value, nextPercent, ...(details[poolKey] || details.general) };
+}
+
+function poolDrawProgressMarkup(poolKey) {
+  const work = poolWorkProgressDetails(poolKey);
+  const balance = Math.max(0, Number(state.tickets?.[poolKey] || 0));
+  const stats = normalizeDrawStats(state.drawStats, state.tickets);
+  const workEarned = Math.floor(work.value + 0.000000001);
+  const earned = Math.max(balance, workEarned, Number(stats.earned?.[poolKey] || 0));
+  const drawn = stats.trackingStartedAt
+    ? Math.max(0, Number(stats.drawn?.[poolKey] || 0))
+    : Math.max(0, earned - balance);
+  return `
+    <section class="pool-work-progress" aria-label="${escapeHtml(POOLS.find((pool) => pool.key === poolKey)?.name || "卡池")}本月進度">
+      <p class="pool-work-total">${escapeHtml(work.total)}</p>
+      <div class="pool-work-stats">
+        <span><small>已獲得</small><strong>${formatMetricValue(earned)} 抽</strong></span>
+        <span><small>已抽</small><strong>${formatMetricValue(drawn)} 抽</strong></span>
+        <span><small>目前可抽</small><strong>${formatMetricValue(balance)} 抽</strong></span>
+      </div>
+      <div class="mini-progress"><span style="width:${work.nextPercent}%"></span></div>
+      <p class="pool-next-draw">${escapeHtml(work.next)}</p>
+    </section>
+  `;
+}
+
 function poolDrawButtonLabel(pool) {
   if (pool.key === "general") return "抽免費池";
   if (pool.key === "visit") return "抽拜訪池";
@@ -5282,7 +5401,10 @@ function settleMetrics(rawMetrics) {
   rewards = applyStreakRewardBonus(rewards, buildStreakReward(streak.count));
   const achievements = buildDailyAchievements(deltaMetrics, rewards, state.settlementStreak);
   Object.entries(rewards).forEach(([key, value]) => {
-    if (key in state.tickets) state.tickets[key] += value;
+    if (key in state.tickets) {
+      state.tickets[key] += value;
+      recordDrawStats("earned", key, value);
+    }
   });
   addMaterials(rewards.materials);
   rewards.materialReport = buildMaterialReport(rewards);
@@ -5673,6 +5795,7 @@ async function draw(poolKey) {
       if (result?.pet) {
         pet = result.pet;
         state.tickets[poolKey] -= 1;
+        recordDrawStats("drawn", poolKey, 1);
         recordDrawPity(poolKey, { pet: ["pet", "star_soul", "essence_conversion", "temple_blessing"].includes(result.outcomeKind) ? pet : null });
         const assistText = activePetAssistText();
         if (result.outcomeKind === "pet") state.activePetId = pet.pet_id;
@@ -5784,6 +5907,7 @@ function applyPreparedDrawOptimisticDebit(entry) {
   if (entry.resource_type === "ticket") {
     const previous = Math.max(0, Number(state.tickets?.[entry.pool] || 0));
     state.tickets[entry.pool] = Math.max(0, previous - 1);
+    recordDrawStats("drawn", entry.pool, 1);
     entry.optimistic_debit = { type: "ticket", pool: entry.pool, previous };
     return true;
   }
@@ -5819,6 +5943,7 @@ function rollbackPreparedDrawOptimisticDebit(entry) {
   if (!debit) return false;
   if (debit.type === "ticket") {
     state.tickets[debit.pool] = debit.previous;
+    recordDrawStats("drawn", debit.pool, -1);
   } else if (debit.type === "guaranteed_pet_draw") {
     state.guaranteedDraws = normalizeGuaranteedDraws(state.guaranteedDraws);
     state.guaranteedDraws[debit.key] = debit.previous;
@@ -6764,6 +6889,7 @@ function renderPools() {
         </div>
         <p class="pool-hook">${escapeHtml(poolHookText(pool.key))}</p>
         <p class="assist-line">${escapeHtml(poolExperienceCue(pool, candidates, unlocked))}</p>
+        ${poolDrawProgressMarkup(pool.key)}
         ${ready ? "" : `
           <div class="pool-unlock-progress">
             <div class="mini-progress"><span style="width:${progress.percent}%"></span></div>
@@ -6805,8 +6931,8 @@ function drawOutcomeTone(draw, pet) {
 
 function drawOutcomeLabel(draw, pet) {
   if (draw?.outcomeKind === "egg") return `${eggLabel(pet)} +1`;
-  if (draw?.outcomeKind === "essence") return `${draw.essenceLabel || essenceLabelForStoryline(pet?.storyline_id)} ×${rewardCount(draw.essenceAmount || draw.resourceAmount || 0)}`;
-  if (draw?.outcomeKind === "essence_conversion") return `${draw.essenceLabel || essenceLabelForStoryline(pet?.storyline_id)} ×${rewardCount(draw.essenceAmount || 5)}`;
+  if (draw?.outcomeKind === "essence") return `${essenceLabelForResource(draw?.essenceKey || draw?.resourceKey, pet)} ×${rewardCount(draw.essenceAmount || draw.resourceAmount || 0)}`;
+  if (draw?.outcomeKind === "essence_conversion") return `${essenceLabelForResource(draw?.essenceKey || draw?.resourceKey, pet)} ×${rewardCount(draw.essenceAmount || 5)}`;
   if (draw?.outcomeKind === "temple_blessing") return "神殿祝福 +1";
   if (draw?.duplicate) return `${pet?.name || "寵物"}星魂 +${rewardCount(draw.fragmentsAdded)}`;
   if (pet?.rarity === "SSR" || pet?.rarity === "UR") return "稀有夥伴加入";
@@ -6820,7 +6946,7 @@ function drawResultSummaryText(draw, pet) {
     return `${eggLabel(pet)}已入袋，目前蛋 ${currentEgg} 顆、${essenceLabelForStoryline(pet?.storyline_id)} ${essence}/${HATCH_ESSENCE_COST}。`;
   }
   if (draw?.outcomeKind === "essence") {
-    return `這抽沒有寵物，但${draw.essenceLabel || essenceLabelForStoryline(pet?.storyline_id)} +${rewardCount(draw.essenceAmount || 0)} 已入袋，離孵化更近。`;
+    return `這抽沒有寵物，但${essenceLabelForResource(draw?.essenceKey || draw?.resourceKey, pet)} +${rewardCount(draw.essenceAmount || 0)} 已入袋，離孵化更近。`;
   }
   if (draw?.outcomeKind === "essence_conversion") {
     return `${pet?.name || "寵物"}已滿星，重複轉為${draw.essenceLabel || essenceLabelForStoryline(pet?.storyline_id)}。`;
