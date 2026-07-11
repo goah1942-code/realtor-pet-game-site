@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v37";
+const APP_VERSION = "v38";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -18,6 +18,7 @@ const ACTIVE_STORYLINE_IDS = new Set([
 const CONTRACT_TEMPLE_STORYLINE_IDS = new Set(["contract", "sl_contract_team_sanctum"]);
 const PROFILE = readEntryProfile();
 const STORAGE_KEY = `${LEGACY_STORAGE_KEY}:${PROFILE.userKey}`;
+const DRAW_SESSION_STORAGE_KEY = `${STORAGE_KEY}:draw-session-v1`;
 const HOME_OPENING_STORAGE_KEY = `${STORAGE_KEY}:home-opening-v17`;
 const PRODUCTION_CLOUD_API_BASE_URL = "https://script.google.com/macros/s/AKfycbwUGu1SSwNJxJZqZU5RX7dZC095_1QOS_XHgH_vu7Hw1x2LG99aoR6Eedpm4ntG5VI/exec";
 const CLOUD_API_BASE_URL = readCloudApiBaseUrl();
@@ -320,7 +321,7 @@ const MONTHLY_BASE_TARGETS = {
   development: { label: "有效拜訪", target: 10, unit: "次" },
   showing: { label: "帶看", target: 15, unit: "次" },
   listing: { label: "委託", target: 4, unit: "件" },
-  contract: { label: "成交分攤", target: 0.35, unit: "件", decimals: 2, note: "0.35 至 0.5 件皆達標" },
+  contract: { label: "成交主力門檻", target: 0.35, unit: "件", decimals: 2, note: "0.35 件以上視為主要成交人員；抽卡依本次新增差額建立批次" },
 };
 const GUARANTEED_DRAW_POOLS = [
   { key: "development", poolKey: "guaranteed_development", name: "拜訪保證抽", storylineId: "sl_development_expedition", theme: "theme-blue" },
@@ -1805,6 +1806,28 @@ function writeEmployeeLogin({ employeeId, branch = "樹林店", agent = "" }) {
 
 function clearEmployeeLogin() {
   localStorage.removeItem(EMPLOYEE_LOGIN_KEY);
+  clearStoredDrawSession();
+}
+
+function readStoredDrawSessionId() {
+  try {
+    return String(sessionStorage.getItem(DRAW_SESSION_STORAGE_KEY) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function storeDrawSessionId(sessionId) {
+  try {
+    if (sessionId) sessionStorage.setItem(DRAW_SESSION_STORAGE_KEY, String(sessionId));
+    else sessionStorage.removeItem(DRAW_SESSION_STORAGE_KEY);
+  } catch {
+    // Browser storage is only a convenience. The server remains the authority.
+  }
+}
+
+function clearStoredDrawSession() {
+  storeDrawSessionId("");
 }
 
 function cleanEmployeeId(value) {
@@ -2238,6 +2261,8 @@ function createInitialState() {
     tickets: { general: 3, boosted: 1, result: 1, blessing: 0 },
     drawPoints: { report_points: 2, daily_free: 3, bonus_draw: 0, boosted: 1, result: 1, blessing: 0 },
     guaranteedDraws: { development: 0, showing: 0, listing: 0, contract: 0 },
+    contractGuaranteeBatches: [],
+    drawSession: { session_id: "", entries: [] },
     drawPity: {},
     materials: {
       listing_core: 1,
@@ -2416,6 +2441,8 @@ function normalizeImportedState(importedState) {
     tickets: mergeObject(initial.tickets, source.tickets),
     drawPoints: mergeObject(initial.drawPoints, source.drawPoints),
     guaranteedDraws: mergeObject(initial.guaranteedDraws, source.guaranteedDraws),
+    contractGuaranteeBatches: Array.isArray(source.contractGuaranteeBatches) ? source.contractGuaranteeBatches.map((item) => ({ ...item })) : [],
+    drawSession: isPlainObject(source.drawSession) ? { ...source.drawSession, entries: Array.isArray(source.drawSession.entries) ? source.drawSession.entries.map((item) => ({ ...item })) : [] } : { ...initial.drawSession },
     drawPity: normalizeDrawPity(source.drawPity || initial.drawPity),
     materials: mergeObject(initial.materials, source.materials),
     eggs: mergeObject(initial.eggs, source.eggs),
@@ -2561,6 +2588,11 @@ function applyBackendEmployeeSnapshot(snapshot = {}) {
     if (isPlainObject(snapshot.specialResources)) state.specialResources = mergeObject(state.specialResources, snapshot.specialResources);
     if (isPlainObject(snapshot.collection)) state.collection = mergeObject(state.collection, snapshot.collection);
   }
+  if (Array.isArray(snapshot.contractGuaranteeBatches)) state.contractGuaranteeBatches = snapshot.contractGuaranteeBatches.map((item) => ({ ...item }));
+  if (isPlainObject(snapshot.drawSession)) {
+    state.drawSession = { ...snapshot.drawSession, entries: Array.isArray(snapshot.drawSession.entries) ? snapshot.drawSession.entries.map((item) => ({ ...item })) : [] };
+    storeDrawSessionId(state.drawSession.session_id || "");
+  }
   if (isPlainObject(snapshot.backendConfig)) {
     state.backendConfig = {
       ...state.backendConfig,
@@ -2623,6 +2655,8 @@ function cloudPlayerStateToSnapshot(data = {}) {
     basis: data.event_basis || data.eventBasis || {},
     drawPoints: isPlainObject(resources.draw_points) ? resources.draw_points : {},
     guaranteedDraws: normalizeGuaranteedDraws(resources.guaranteed_draws || resources.guaranteedDraws),
+    contractGuaranteeBatches: Array.isArray(data.contract_guarantee_batches) ? data.contract_guarantee_batches : (Array.isArray(resources.contract_guarantee_batches) ? resources.contract_guarantee_batches : []),
+    drawSession: isPlainObject(data.draw_session) ? data.draw_session : (isPlainObject(resources.draw_session) ? resources.draw_session : { session_id: "", entries: [] }),
     tickets: cloudResourcesToTickets(resources),
     materials: resources.materials || {},
     eggs: resources.eggs || {},
@@ -3031,7 +3065,7 @@ async function loadCloudState() {
     }
     const params = MANAGER_MODE
       ? { period: managerDashboardPeriod(), manager_key: managerKey }
-      : { uid: PROFILE.employeeId || PROFILE.userKey, period: currentPeriodKey() };
+      : { uid: PROFILE.employeeId || PROFILE.userKey, period: currentPeriodKey(), draw_session_id: readStoredDrawSessionId() };
     if (!MANAGER_MODE && PROFILE.loginRequired) return false;
     const data = cloudEnvelopeData(await fetchCloudEnvelope(action, params), action);
     if (!data) return false;
@@ -4248,10 +4282,12 @@ function rewardTicketSummary(rewards = {}) {
   const ticketSource = isPlainObject(source?.tickets) ? source.tickets : source;
   const parts = ticketDeltaParts(ticketSource);
   const guaranteed = normalizeGuaranteedDraws(source?.guaranteed_draws || source?.guaranteedDraws);
-  GUARANTEED_DRAW_POOLS.forEach((pool) => {
+  GUARANTEED_DRAW_POOLS.filter((pool) => pool.key !== "contract").forEach((pool) => {
     const amount = Number(guaranteed[pool.key] || 0);
     if (amount > 0) parts.push(`${pool.shortName}保證卡 +${rewardCount(amount)}`);
   });
+  const contractBatches = Array.isArray(source?.contract_guarantee_batches) ? source.contract_guarantee_batches : [];
+  if (contractBatches.length) parts.push(`成交保底批次 ${contractBatches.map((draws) => `${rewardCount(draws)}抽`).join("+")}`);
   if (parts.length) return `新獎勵：${parts.join("、")}`;
   return "新券：本次未新增，先看下一個主任務";
 }
@@ -4313,7 +4349,10 @@ function regularTicketTotal() {
 }
 
 function totalGuaranteedDraws() {
-  return Object.values(normalizeGuaranteedDraws(state.guaranteedDraws)).reduce((sum, value) => sum + value, 0);
+  const standard = Object.entries(normalizeGuaranteedDraws(state.guaranteedDraws))
+    .filter(([key]) => key !== "contract")
+    .reduce((sum, [, value]) => sum + value, 0);
+  return standard + contractGuaranteeRemainingDraws();
 }
 
 function totalTickets() {
@@ -4322,6 +4361,19 @@ function totalTickets() {
 
 function guaranteedPoolConfig(poolKey) {
   return GUARANTEED_DRAW_POOLS.find((pool) => pool.poolKey === poolKey || pool.key === poolKey) || null;
+}
+
+function contractGuaranteeBatches() {
+  return Array.isArray(state.contractGuaranteeBatches) ? state.contractGuaranteeBatches : [];
+}
+
+function contractGuaranteeRemainingDraws() {
+  return contractGuaranteeBatches().reduce((sum, batch) => sum + Math.max(0, Number(batch.remaining_draws ?? (Number(batch.total_draws || 0) - Number(batch.revealed_draws || 0)))), 0);
+}
+
+function nextPreparedCloudDraw(poolKey) {
+  const entries = Array.isArray(state.drawSession?.entries) ? state.drawSession.entries : [];
+  return entries.find((entry) => entry.pool === poolKey && !entry.claimed && !entry.client_revealed) || null;
 }
 
 function guaranteedPoolCandidates(pool) {
@@ -5299,8 +5351,12 @@ function buildLocalDrawResult(pool) {
 }
 
 function canStartDraw(poolKey) {
+  if (poolKey === "contract_guarantee") {
+    return contractGuaranteeRemainingDraws() > 0 && Boolean(nextPreparedCloudDraw(poolKey));
+  }
   const guaranteedPool = guaranteedPoolConfig(poolKey);
   if (guaranteedPool) {
+    if (CLOUD_API_BASE_URL && nextPreparedCloudDraw(poolKey)) return true;
     const balance = Number(state.guaranteedDraws?.[guaranteedPool.key] || 0);
     return balance > 0 && guaranteedPoolCandidates(guaranteedPool).length > 0;
   }
@@ -5363,7 +5419,7 @@ function renderDrawSurfaces() {
 async function draw(poolKey) {
   if (drawRequest || !canStartDraw(poolKey)) return false;
   const guaranteedPool = guaranteedPoolConfig(poolKey);
-  const pool = POOLS.find((item) => item.key === poolKey) || guaranteedPool;
+  const pool = POOLS.find((item) => item.key === poolKey) || guaranteedPool || (poolKey === "contract_guarantee" ? { key: poolKey, name: "成交神殿保底批次" } : null);
   if (!pool) return false;
 
   drawRequest = { poolKey, startedAt: Date.now() };
@@ -5371,7 +5427,13 @@ async function draw(poolKey) {
   await waitForDrawPendingPaint();
   try {
     let pet = null;
-    if (CLOUD_API_BASE_URL) {
+    const preparedEntry = CLOUD_API_BASE_URL ? nextPreparedCloudDraw(poolKey) : null;
+    if (preparedEntry) {
+      pet = revealPreparedCloudDraw(pool, preparedEntry);
+      renderDrawSurfaces();
+      if (pet) triggerCelebration(drawOutcomeTone(state.history[0], pet));
+      await drawCloud(poolKey, preparedEntry);
+    } else if (CLOUD_API_BASE_URL) {
       pet = await drawCloud(poolKey);
     } else if (guaranteedPool) {
       pet = drawLocalGuaranteed(guaranteedPool);
@@ -5414,6 +5476,42 @@ async function draw(poolKey) {
   }
 }
 
+function revealPreparedCloudDraw(pool, entry) {
+  const outcome = isPlainObject(entry?.outcome) ? entry.outcome : {};
+  const pet = getPet(outcome.pet_id || outcome.pet?.pet_id) || outcome.pet;
+  if (!pet) return null;
+  entry.client_revealed = true;
+  const outcomeKind = outcome.outcome_kind || "pet";
+  const label = outcomeKind === "essence"
+    ? `${outcome.resource_label || essenceLabelForStoryline(pet.storyline_id)} x${rewardCount(outcome.essence_amount || 1)}`
+    : outcomeKind === "egg"
+      ? `${eggLabel(pet)} +1`
+      : `${pet.name} 已現身`;
+  state.history.unshift({
+    type: "draw",
+    at: new Date().toISOString(),
+    petId: pet.pet_id,
+    text: `${pool.name} ${label}`,
+    assistText: activePetAssistText(),
+    poolKey: entry.pool,
+    duplicate: false,
+    fragmentsAdded: 0,
+    outcomeKind,
+    eggPetId: outcomeKind === "egg" ? pet.pet_id : "",
+    essenceKey: outcome.essence_key || "",
+    essenceLabel: outcome.resource_label || "",
+    essenceAmount: rewardCount(outcome.essence_amount || 0),
+    resourceLabel: outcome.resource_label || "",
+    resourceAmount: rewardCount(outcome.essence_amount || 0),
+    drawSessionEntryId: entry.entry_id,
+    pendingSync: true,
+    rateMode: entry.resource_type === "contract_guarantee_batch" ? "contract-guarantee-batch" : "cloud-prepared",
+  });
+  state.history = state.history.slice(0, 12);
+  saveState();
+  return pet;
+}
+
 function drawLocalGuaranteed(pool) {
   state.guaranteedDraws = normalizeGuaranteedDraws(state.guaranteedDraws);
   if (Number(state.guaranteedDraws[pool.key] || 0) <= 0) return false;
@@ -5439,25 +5537,27 @@ function drawLocalGuaranteed(pool) {
   return pet;
 }
 
-async function drawCloud(poolKey) {
+async function drawCloud(poolKey, preparedEntry = null) {
   const guaranteedPool = guaranteedPoolConfig(poolKey);
-  const pool = POOLS.find((item) => item.key === poolKey) || guaranteedPool;
+  const pool = POOLS.find((item) => item.key === poolKey) || guaranteedPool || (poolKey === "contract_guarantee" ? { key: poolKey, name: "成交神殿保底批次" } : null);
   if (!pool) return false;
   try {
     const envelope = await postCloudEnvelope("draw", {
       uid: PROFILE.employeeId || PROFILE.userKey,
       period: currentPeriodKey(),
       pool: poolKey,
-      resource_type: guaranteedPool ? "guaranteed_pet_draw" : "ticket",
-      client_request_id: randomClientId("draw"),
+      resource_type: preparedEntry?.resource_type || (guaranteedPool ? "guaranteed_pet_draw" : "ticket"),
+      draw_session_id: preparedEntry ? state.drawSession?.session_id : "",
+      draw_entry_id: preparedEntry?.entry_id || "",
+      client_request_id: preparedEntry ? `draw_${state.drawSession?.session_id || "session"}_${preparedEntry.entry_id}` : randomClientId("draw"),
     });
     const data = cloudEnvelopeData(envelope, "draw");
     if (!data || !data.pet || !data.player_state) throw new Error("draw response missing pet/player_state");
     applyCloudPlayerState(data.player_state);
-    if (!guaranteedPool) recordDrawPity(poolKey, { pet: data.pet });
     const pet = getPet(data.pet.pet_id) || data.pet;
-    const resultText = data.duplicate ? `${pet.name || data.pet.pet_id}星魂 +${rewardCount(data.fragments_added)}` : "新寵物加入卡片庫";
-    state.history.unshift({
+    const outcomeKind = data.outcome_kind || (data.duplicate ? "star_soul" : "pet");
+    const resultText = data.text || (data.duplicate ? `${pet.name || data.pet.pet_id}星魂 +${rewardCount(data.fragments_added)}` : "新寵物加入卡片庫");
+    const historyItem = {
       type: "draw",
       at: new Date().toISOString(),
       petId: data.pet.pet_id,
@@ -5466,16 +5566,31 @@ async function drawCloud(poolKey) {
       poolKey,
       duplicate: Boolean(data.duplicate),
       fragmentsAdded: rewardCount(data.fragments_added),
-      outcomeKind: data.duplicate ? "star_soul" : "pet",
-      rateMode: guaranteedPool ? "cloud-monthly-guaranteed-pet" : "cloud",
-    });
+      outcomeKind,
+      eggPetId: data.egg_pet_id || "",
+      essenceKey: data.essence_key || "",
+      essenceLabel: data.resource_label || "",
+      essenceAmount: rewardCount(data.essence_amount || 0),
+      resourceLabel: data.resource_label || "",
+      resourceAmount: rewardCount(data.resource_amount || data.essence_amount || 0),
+      drawSessionEntryId: preparedEntry?.entry_id || "",
+      pendingSync: false,
+      rateMode: preparedEntry?.resource_type === "contract_guarantee_batch" ? "contract-guarantee-batch" : (guaranteedPool ? "cloud-monthly-guaranteed-pet" : "cloud"),
+    };
+    const existingIndex = preparedEntry ? state.history.findIndex((item) => item.drawSessionEntryId === preparedEntry.entry_id) : -1;
+    if (existingIndex >= 0) state.history.splice(existingIndex, 1, historyItem);
+    else state.history.unshift(historyItem);
     state.history = state.history.slice(0, 12);
     state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-draw" : "cloud-draw";
     saveState();
+    renderDrawSurfaces();
     return pet;
   } catch (error) {
     state.manager.cloudStatus = `cloud-draw-error:${error.message || "unknown"}`;
+    const pending = preparedEntry && state.history.find((item) => item.drawSessionEntryId === preparedEntry.entry_id);
+    if (pending) pending.syncError = true;
     saveState();
+    renderDrawSurfaces();
     return false;
   }
 }
@@ -5830,9 +5945,9 @@ function formatProgressValue(value, decimals = 1) {
 function contractTempleProgressCue(progress) {
   const contractShare = normalizeMetricValue(progress?.contractTemple?.sources?.contract || 0);
   const templeProgress = normalizeMetricValue(progress?.contractTemple?.current || 0);
-  if (contractShare >= 0.35) return "成交分攤已達 0.35 件，符合成交池保證卡門檻。";
-  if (contractShare > 0) return "成交分攤尚未達 0.35 件，但仍會累積成交神殿回饋。";
-  if (templeProgress > 0) return "委託與見面談已推進成交神殿；成交池保證卡仍需成交分攤達 0.35 件。";
+  if (contractShare >= 0.35) return "成交分攤已達主要成交門檻；下一次匯入若有新增差額，會建立成交保底批次。";
+  if (contractShare > 0) return "成交分攤尚未達 0.35 件；累積資料保留，保底批次只看本次新增差額。";
+  if (templeProgress > 0) return "委託與見面談已推進成交神殿；成交保底批次仍需本次匯入有新增成交分攤。";
   return "委託、見面談、成件都會推進成交神殿，不只看整件成交。";
 }
 
@@ -5920,7 +6035,7 @@ function renderProgressDashboard() {
         <div class="team-topline"><span>${escapeHtml(item.label)}</span><span>${formatProgressValue(item.current, item.decimals)} / ${formatProgressValue(item.target, item.decimals)} ${escapeHtml(item.unit)}</span></div>
         <div class="bar"><span style="width:${progressPercent(item.current, item.target)}%"></span></div>
       `).join("")}
-      <p>成交考量比例分攤，累計 0.35 件即達標；0.35、0.4、0.5 件都可取得成交池保證卡。四條目標各自計算，不互相抵銷。</p>
+      <p>成交 0.35 件是主要成交門檻；實際抽卡只看這次匯入比前次新增多少，依 0.35/0.4/0.5 建立 3/4/5 抽保底批次。四條目標各自計算，不互相抵銷。</p>
     </article>
     <article class="progress-card">
       <div class="team-topline"><strong>${escapeHtml(progress.contractTemple.label)}</strong><span>${formatMetricValue(progress.contractTemple.current)}</span></div>
@@ -6135,7 +6250,7 @@ function renderGuaranteedDrawPools() {
   const progress = state.progress || buildProgressSnapshot(state.metrics);
   const targets = buildMonthlyBaseTargets({ basis: progress.basis, groups: progress.groups, source: progress.sourceMetrics });
   const balances = normalizeGuaranteedDraws(state.guaranteedDraws);
-  return GUARANTEED_DRAW_POOLS.map((pool) => {
+  const standardPools = GUARANTEED_DRAW_POOLS.filter((pool) => pool.key !== "contract").map((pool) => {
     const target = targets.find((item) => item.key === pool.key) || MONTHLY_BASE_TARGETS[pool.key];
     const balance = balances[pool.key] || 0;
     const candidates = guaranteedPoolCandidates(pool);
@@ -6166,6 +6281,40 @@ function renderGuaranteedDrawPools() {
       </article>
     `;
   }).join("");
+  return standardPools + renderContractGuaranteePool();
+}
+
+function renderContractGuaranteePool() {
+  const batches = contractGuaranteeBatches();
+  const remaining = contractGuaranteeRemainingDraws();
+  const prepared = nextPreparedCloudDraw("contract_guarantee");
+  const ready = remaining > 0 && Boolean(prepared);
+  const batchText = batches.length
+    ? batches.map((batch, index) => `第${index + 1}組 ${Number(batch.revealed_draws || 0)}/${Number(batch.total_draws || 0)}`).join(" · ")
+    : "下一次店長匯入的成交新增差額會建立保底批次";
+  const statusText = ready
+    ? `本月還有 ${remaining} 次成交保底揭露；最後一抽固定完整寵物卡。`
+    : remaining > 0
+      ? "正在準備本次登入的抽卡序列，重新開啟頁面後即可揭露。"
+      : "只採本次匯入新增的成交件數；0.35 起建立 3/4/5 抽保底批次。";
+  return `
+    <article class="pool-card theme-gold ${ready ? "is-ready" : "is-unlockable"}">
+      <span class="summon-kicker">成交神殿保底批次</span>
+      <div class="team-topline">
+        <h3>成交保底抽</h3>
+        <span>${remaining ? `${remaining} 次` : "尚未建立"}</span>
+      </div>
+      <p class="pool-hook">${escapeHtml(statusText)}</p>
+      <p class="assist-line">${escapeHtml(batchText)}</p>
+      <div class="pool-meta">
+        <span class="soft-pill">本月限定</span>
+        <span class="soft-pill">前段契約精華</span>
+        <span class="soft-pill">最後保證完整寵物</span>
+      </div>
+      <button class="${ready ? "primary-button" : "secondary-button"}" type="button" ${ready ? 'data-draw="contract_guarantee"' : "disabled"}>${ready ? "揭露成交保底" : remaining ? "準備中" : "等待成交入帳"}</button>
+      ${buildPoolInlineDrawResult({ key: "contract_guarantee" })}
+    </article>
+  `;
 }
 
 function renderPools() {
