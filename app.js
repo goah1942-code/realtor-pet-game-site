@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v44";
+const APP_VERSION = "v45";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -2265,6 +2265,7 @@ function createInitialState() {
     guaranteedDraws: { development: 0, showing: 0, listing: 0, contract: 0 },
     contractGuaranteeBatches: [],
     drawSession: { session_id: "", entries: [] },
+    lastCloudResetAt: "",
     drawPity: {},
     materials: {
       listing_core: 1,
@@ -2571,6 +2572,7 @@ function applyBackendEmployeeSnapshot(snapshot = {}) {
     sourceMetrics,
     deltaMetrics,
   );
+  applyCloudResetMarker(snapshot.lastResetAt);
   if (snapshot.replaceInventory) {
     if (isPlainObject(snapshot.tickets)) state.tickets = { ...snapshot.tickets };
     if (isPlainObject(snapshot.drawPoints)) state.drawPoints = { ...snapshot.drawPoints };
@@ -2607,6 +2609,14 @@ function applyBackendEmployeeSnapshot(snapshot = {}) {
   saveState();
   render();
   return state.progress;
+}
+
+function applyCloudResetMarker(lastResetAt) {
+  const marker = String(lastResetAt || "");
+  if (!marker || marker === state.lastCloudResetAt) return false;
+  state.history = [];
+  state.lastCloudResetAt = marker;
+  return true;
 }
 
 function collectionArrayToMap(items = []) {
@@ -2666,6 +2676,7 @@ function cloudPlayerStateToSnapshot(data = {}) {
     eggs: resources.eggs || {},
     essences: resources.essences || {},
     specialResources: resources.special_resources || resources.specialResources || {},
+    lastResetAt: resources.last_reset_at || resources.lastResetAt || "",
     collection: ownedCollection,
     backendConfig: data.backend_config || data.backendConfig || {},
     settlementSummary: data.latestSettlement || data.latest_settlement || data.settlement_summary || data.settlementSummary || data.latest_reward_event || data.reward_summary || data.rewardSummary || null,
