@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v42";
+const APP_VERSION = "v43";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -2633,10 +2633,12 @@ function collectionArrayToMap(items = []) {
 }
 
 function cloudResourcesToTickets(resources = {}) {
-  const tickets = isPlainObject(resources.tickets) ? { ...resources.tickets } : {};
+  const hasAuthoritativeTickets = isPlainObject(resources.tickets);
+  const tickets = hasAuthoritativeTickets ? { ...resources.tickets } : {};
   const drawPoints = isPlainObject(resources.draw_points) ? resources.draw_points : {};
-  const hasTicketBalance = Object.values(tickets).some((value) => Number(value || 0) > 0);
-  if (!hasTicketBalance && Object.keys(drawPoints).length) {
+  // draw_points records earned progress, not the remaining balance. Only use it
+  // for compatibility with old API responses that do not expose tickets at all.
+  if (!hasAuthoritativeTickets && Object.keys(drawPoints).length) {
     tickets.general = Number(drawPoints.report_points || 0) + Number(drawPoints.daily_free || 0);
     tickets.boosted = Number(drawPoints.boosted || 0);
     tickets.result = Number(drawPoints.result || 0);
