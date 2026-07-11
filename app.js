@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v43";
+const APP_VERSION = "v44";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -4378,8 +4378,14 @@ function contractGuaranteeRemainingDraws() {
 }
 
 function nextPreparedCloudDraw(poolKey) {
+  return preparedCloudDraws(poolKey, 1)[0] || null;
+}
+
+function preparedCloudDraws(poolKey, limit = Infinity) {
   const entries = Array.isArray(state.drawSession?.entries) ? state.drawSession.entries : [];
-  return entries.find((entry) => entry.pool === poolKey && !entry.claimed && !entry.client_revealed) || null;
+  return entries
+    .filter((entry) => entry.pool === poolKey && !entry.claimed && !entry.client_revealed)
+    .slice(0, limit);
 }
 
 function guaranteedPoolCandidates(pool) {
@@ -5560,6 +5566,37 @@ async function draw(poolKey) {
   }
 }
 
+async function drawTenGeneral() {
+  const poolKey = "general";
+  const pool = POOLS.find((item) => item.key === poolKey);
+  const entries = preparedCloudDraws(poolKey, 10);
+  if (drawRequest || !pool || Number(state.tickets?.general || 0) < 10 || entries.length < 10) return false;
+
+  const batchRevealId = randomClientId("ten-draw");
+  drawRequest = { poolKey, batchSize: 10, startedAt: Date.now() };
+  try {
+    entries.forEach((entry, index) => {
+      revealPreparedCloudDraw(pool, entry);
+      const historyItem = state.history.find((item) => item.drawSessionEntryId === entry.entry_id);
+      if (historyItem) {
+        historyItem.batchRevealId = batchRevealId;
+        historyItem.batchIndex = index + 1;
+      }
+    });
+    saveState();
+    renderDrawSurfaces();
+    const batchDraws = state.history.filter((item) => item.batchRevealId === batchRevealId);
+    const strongest = batchDraws.find((item) => item.outcomeKind === "pet" || item.outcomeKind === "star_soul")
+      || batchDraws.find((item) => item.outcomeKind === "egg")
+      || batchDraws[0];
+    const strongestPet = strongest ? (getPet(strongest.petId) || strongest.petSnapshot) : null;
+    if (strongestPet) triggerCelebration(drawOutcomeTone(strongest, strongestPet));
+    return await drawCloudBatch(entries, batchRevealId);
+  } finally {
+    drawRequest = null;
+  }
+}
+
 function revealPreparedCloudDraw(pool, entry) {
   const outcome = isPlainObject(entry?.outcome) ? entry.outcome : {};
   const pet = getPet(outcome.pet_id || outcome.pet?.pet_id) || outcome.pet;
@@ -5736,6 +5773,57 @@ async function drawCloud(poolKey, preparedEntry = null) {
     saveState();
     renderDrawSurfaces();
     renderDrawRevealResult();
+    return false;
+  }
+}
+
+async function drawCloudBatch(entries, batchRevealId) {
+  try {
+    const envelope = await postCloudEnvelope("drawBatch", {
+      uid: PROFILE.employeeId || PROFILE.userKey,
+      period: currentPeriodKey(),
+      pool: "general",
+      draw_session_id: state.drawSession?.session_id || "",
+      draw_entry_ids: JSON.stringify(entries.map((entry) => entry.entry_id)),
+      client_request_id: `draw_batch_${state.drawSession?.session_id || "session"}_${entries.map((entry) => entry.entry_id).join("_")}`,
+    });
+    const data = cloudEnvelopeData(envelope, "drawBatch");
+    if (!data?.player_state || !Array.isArray(data.draws) || data.draws.length !== 10) throw new Error("drawBatch response missing draws/player_state");
+    applyCloudPlayerState(data.player_state);
+    data.draws.forEach((drawResult, index) => {
+      const entry = entries[index];
+      const historyItem = state.history.find((item) => item.drawSessionEntryId === entry?.entry_id);
+      if (!historyItem) return;
+      const pet = getPet(drawResult.pet?.pet_id) || drawResult.pet || historyItem.petSnapshot;
+      Object.assign(historyItem, {
+        petId: pet?.pet_id || historyItem.petId,
+        petSnapshot: pet ? { ...pet } : historyItem.petSnapshot,
+        text: `${POOLS.find((item) => item.key === "general")?.name || "免費卡池"} ${drawResult.text || "抽卡結果已入帳"}`,
+        duplicate: Boolean(drawResult.duplicate),
+        fragmentsAdded: rewardCount(drawResult.fragments_added),
+        outcomeKind: drawResult.outcome_kind || historyItem.outcomeKind,
+        eggPetId: drawResult.egg_pet_id || "",
+        essenceKey: drawResult.essence_key || "",
+        essenceLabel: drawResult.resource_label || "",
+        essenceAmount: rewardCount(drawResult.essence_amount || 0),
+        resourceLabel: drawResult.resource_label || "",
+        resourceAmount: rewardCount(drawResult.resource_amount || drawResult.essence_amount || 0),
+        pendingSync: false,
+        batchRevealId,
+        batchIndex: index + 1,
+        rateMode: "cloud-batch-10",
+      });
+    });
+    state.manager.cloudStatus = "cloud-draw-batch";
+    saveState();
+    renderDrawSurfaces();
+    return true;
+  } catch (error) {
+    entries.slice().reverse().forEach(rollbackPreparedDrawOptimisticDebit);
+    state.history = state.history.filter((item) => item.batchRevealId !== batchRevealId);
+    state.manager.cloudStatus = `cloud-draw-batch-error:${error.message || "unknown"}`;
+    saveState();
+    renderDrawSurfaces();
     return false;
   }
 }
@@ -6368,6 +6456,7 @@ function renderRewardAction() {
 function buildPoolInlineDrawResult(pool) {
   const drawResult = state.history.find((item) => item.type === "draw");
   if (!drawResult || drawResult.poolKey !== pool.key) return "";
+  if (drawResult.batchRevealId) return buildPoolTenDrawResult(drawResult.batchRevealId, pool.key);
   const pet = getPet(drawResult.petId);
   if (!pet) return "";
   const owned = getOwned(pet.pet_id);
@@ -6387,6 +6476,40 @@ function buildPoolInlineDrawResult(pool) {
       </div>
       <p>${escapeHtml(drawResultSummaryText(drawResult, pet))}</p>
       ${fragmentProgress ? `<p class="pool-inline-fragment">${escapeHtml(fragmentProgress)}</p>` : ""}
+    </section>
+  `;
+}
+
+function buildPoolTenDrawResult(batchRevealId, poolKey) {
+  const draws = state.history
+    .filter((item) => item.type === "draw" && item.poolKey === poolKey && item.batchRevealId === batchRevealId)
+    .sort((left, right) => Number(left.batchIndex || 0) - Number(right.batchIndex || 0))
+    .slice(0, 10);
+  if (!draws.length) return "";
+  const essenceCount = draws.filter((item) => item.outcomeKind === "essence").length;
+  const eggCount = draws.filter((item) => item.outcomeKind === "egg").length;
+  const petCount = draws.length - essenceCount - eggCount;
+  return `
+    <section class="pool-inline-result pool-ten-result" aria-live="polite">
+      <div class="team-topline">
+        <span class="summon-kicker">十連結果</span>
+        <strong>精華 ${essenceCount} · 蛋 ${eggCount} · 寵物/星魂 ${petCount}</strong>
+      </div>
+      <div class="ten-draw-grid">
+        ${draws.map((draw) => {
+          const pet = getPet(draw.petId) || draw.petSnapshot;
+          if (!pet) return "";
+          const owned = getOwned(pet.pet_id);
+          return `
+            <div class="ten-draw-item draw-tone-${escapeHtml(drawOutcomeTone(draw, pet))}">
+              <span>${draw.batchIndex}</span>
+              <div class="mini-pet">${drawResultVisual(pet, owned, draw, "small")}</div>
+              <strong>${escapeHtml(drawOutcomeLabel(draw, pet))}</strong>
+            </div>
+          `;
+        }).join("")}
+      </div>
+      <p>${draws.some((item) => item.pendingSync) ? "結果已揭曉，整批雲端保存中。" : "十連結果已保存。"}</p>
     </section>
   `;
 }
@@ -6499,7 +6622,15 @@ function renderPools() {
           <span class="soft-pill">${escapeHtml(drawPacingCue(pool.key))}</span>
           <span class="soft-pill">${escapeHtml(activePetAssistText().replace("主寵助力：", ""))}</span>
         </div>
-        <button class="${ready ? "primary-button" : "secondary-button unlock-button"}" type="button" ${ready ? `data-draw="${pool.key}"` : preparingSequence ? "disabled" : `data-unlock-pool="${pool.key}"`} ${!ready && !canGuide ? "disabled" : ""}>${escapeHtml(ready ? poolDrawButtonLabel(pool) : preparingSequence ? "順序準備中" : poolUnlockButtonLabel(pool.key))}</button>
+        <div class="pool-draw-actions">
+          <button class="${ready ? "primary-button" : "secondary-button unlock-button"}" type="button" ${ready ? `data-draw="${pool.key}"` : preparingSequence ? "disabled" : `data-unlock-pool="${pool.key}"`} ${!ready && !canGuide ? "disabled" : ""}>${escapeHtml(ready ? poolDrawButtonLabel(pool) : preparingSequence ? "順序準備中" : poolUnlockButtonLabel(pool.key))}</button>
+          ${pool.key === "general" ? (() => {
+            const preparedTen = preparedCloudDraws("general", 10).length;
+            const tenReady = ready && tickets >= 10 && preparedTen >= 10;
+            const tenLabel = tenReady ? "十連抽" : tickets < 10 ? `差 ${10 - tickets} 張十連` : "十連準備中";
+            return `<button class="secondary-button ten-draw-button" type="button" ${tenReady ? 'data-draw-ten="general"' : "disabled"}>${escapeHtml(tenLabel)}</button>`;
+          })() : ""}
+        </div>
         ${buildPoolInlineDrawResult(pool)}
       </article>
     `;
@@ -8300,6 +8431,10 @@ document.addEventListener("click", (event) => {
   if (target.dataset.shareDraw) shareLastDraw();
   if (target.dataset.shareDaily) shareDailyReport();
   if (target.dataset.shareTeam) shareTeamContribution();
+  if (target.dataset.drawTen === "general") {
+    drawTenGeneral();
+    return;
+  }
   if (target.dataset.draw) draw(target.dataset.draw);
   if (target.dataset.active) {
     state.activePetId = target.dataset.active;

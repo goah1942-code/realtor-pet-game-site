@@ -2791,6 +2791,74 @@ body.draw-reveal-open {
   background: #fff7df;
 }
 
+.pool-draw-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.pool-draw-actions > :only-child {
+  grid-column: 1 / -1;
+}
+
+.ten-draw-button {
+  border-color: #b88a2f;
+  color: #72500f;
+  background: #fff8df;
+}
+
+.pool-ten-result .team-topline {
+  align-items: baseline;
+}
+
+.pool-ten-result .team-topline strong {
+  font-size: 12px;
+}
+
+.ten-draw-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.ten-draw-item {
+  position: relative;
+  min-width: 0;
+  padding: 5px 3px 6px;
+  border: 1px solid #dbe3e8;
+  border-radius: 6px;
+  background: #fff;
+  text-align: center;
+}
+
+.ten-draw-item > span {
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  z-index: 1;
+  color: #61717d;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ten-draw-item .mini-pet {
+  width: 100%;
+  min-height: 46px;
+}
+
+.ten-draw-item .pet-art-frame {
+  width: 100%;
+  min-width: 0;
+}
+
+.ten-draw-item > strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+  line-height: 1.25;
+}
+
 .progress-dashboard,
 .progress-focus-grid,
 .manager-grid,
