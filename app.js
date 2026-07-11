@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v38";
+const APP_VERSION = "v42";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -26,6 +26,7 @@ captureCloudManagerKeyFromUrl();
 let homeOpeningStateCache = null;
 let petTalkTimer = 0;
 let drawRequest = null;
+let cloudPlayerStateReady = !CLOUD_API_BASE_URL || CLOUD_API_BASE_URL === "mock" || MANAGER_MODE;
 const DRAW_REVEAL_OVERLAY_ENABLED = false;
 
 let PETS = [
@@ -3070,8 +3071,10 @@ async function loadCloudState() {
     if (!MANAGER_MODE && PROFILE.loginRequired) return false;
     const data = cloudEnvelopeData(await fetchCloudEnvelope(action, params), action);
     if (!data) return false;
+    if (!MANAGER_MODE) cloudPlayerStateReady = true;
     return MANAGER_MODE ? applyCloudManagerDashboard(data) : applyCloudPlayerState(data);
   } catch (error) {
+    if (!MANAGER_MODE) cloudPlayerStateReady = false;
     state.manager.cloudStatus = `cloud-error:${error.message || "unknown"}`;
     saveState();
     render();
@@ -5353,6 +5356,7 @@ function buildLocalDrawResult(pool) {
 
 function canStartDraw(poolKey) {
   const productionSequenceRequired = Boolean(CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock");
+  if (productionSequenceRequired && !cloudPlayerStateReady) return false;
   if (poolKey === "contract_guarantee") {
     return contractGuaranteeRemainingDraws() > 0 && Boolean(nextPreparedCloudDraw(poolKey));
   }
@@ -6394,7 +6398,7 @@ function renderGuaranteedDrawPools() {
     const balance = balances[pool.key] || 0;
     const candidates = guaranteedPoolCandidates(pool);
     const baseReady = balance > 0 && candidates.length > 0;
-    const preparingSequence = Boolean(baseReady && CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock" && !nextPreparedCloudDraw(pool.poolKey));
+    const preparingSequence = Boolean(baseReady && CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock" && (!cloudPlayerStateReady || !nextPreparedCloudDraw(pool.poolKey)));
     const ready = baseReady && !preparingSequence;
     const earnedTiers = guaranteedTargetTier(target);
     const nextThreshold = (earnedTiers + 1) * Number(target.target || 0);
@@ -6431,7 +6435,7 @@ function renderContractGuaranteePool() {
   const batches = contractGuaranteeBatches();
   const remaining = contractGuaranteeRemainingDraws();
   const prepared = nextPreparedCloudDraw("contract_guarantee");
-  const ready = remaining > 0 && Boolean(prepared);
+  const ready = remaining > 0 && cloudPlayerStateReady && Boolean(prepared);
   const batchText = batches.length
     ? batches.map((batch, index) => `第${index + 1}組 ${Number(batch.revealed_draws || 0)}/${Number(batch.total_draws || 0)}`).join(" · ")
     : "下一次店長匯入的成交新增差額會建立保底批次";
@@ -6468,7 +6472,7 @@ function renderPools() {
     const unlocked = poolUnlocked(pool);
     const tickets = Number(state.tickets[pool.key] || 0);
     const baseReady = unlocked && tickets > 0 && candidates.length > 0;
-    const preparingSequence = Boolean(baseReady && CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock" && !nextPreparedCloudDraw(pool.key));
+    const preparingSequence = Boolean(baseReady && CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock" && (!cloudPlayerStateReady || !nextPreparedCloudDraw(pool.key)));
     const ready = baseReady && !preparingSequence;
     const progress = nextTicketProgress(pool.key, state.metrics);
     const ticketLabelText = tickets > 0 ? `${tickets} 張` : progress.label;
