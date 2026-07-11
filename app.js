@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v35";
+const APP_VERSION = "v36";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -5639,7 +5639,9 @@ function renderReportPeriodInput() {
 function renderDailyStatus() {
   const status = document.getElementById("dailyStatus");
   const settled = state.dailySettlements?.[todayKey()];
-  const periodText = settled?.period || normalizeSourceLedger(state.sourceLedger).activePeriod || currentPeriodKey();
+  const cloudSettlement = isPlainObject(state.latestSettlementSummary) ? state.latestSettlementSummary : {};
+  const cloudStatus = String(cloudSettlement.status || "").toLowerCase();
+  const periodText = settled?.period || cloudSettlement.report_period || cloudSettlement.period || normalizeSourceLedger(state.sourceLedger).activePeriod || currentPeriodKey();
   const nextStreak = nextStreakRewardPreview();
   const nextStreakText = `下個寶箱 ${nextStreak.count}天：${nextStreak.title}`;
   if (status) {
@@ -5647,6 +5649,12 @@ function renderDailyStatus() {
       ? settled.awarded
         ? `<span class="material-pill">${escapeHtml(periodText)} 差額已入帳</span><span class="soft-pill">新累積會補差額</span>`
         : `<span class="soft-pill">${escapeHtml(periodText)} 已記錄，沒有新增差額</span><span class="soft-pill">新累積會補差額</span>`
+      : cloudStatus === "first_import"
+        ? `<span class="material-pill">${escapeHtml(periodText)} 本月累積已同步</span><span class="soft-pill">首次匯入</span>`
+        : cloudStatus === "changed"
+          ? `<span class="material-pill">${escapeHtml(periodText)} 差額已入帳</span><span class="soft-pill">新累積會補差額</span>`
+          : cloudStatus === "no_change"
+            ? `<span class="soft-pill">${escapeHtml(periodText)} 已記錄，沒有新增差額</span><span class="soft-pill">新累積會補差額</span>`
       : `<span class="soft-pill">${escapeHtml(periodText)} 尚未入帳新增差額</span>`;
     status.innerHTML = `${periodStatus}<span class="soft-pill">${escapeHtml(streakMessage())}</span><span class="soft-pill">${escapeHtml(nextStreakText)}</span>`;
   }
