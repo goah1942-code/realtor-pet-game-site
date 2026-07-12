@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v56";
+const APP_VERSION = "v57";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -38,7 +38,9 @@ let drawClaimBatchInFlight = false;
 let activeDrawClaimRequestId = "";
 let drawClaimRetryCount = 0;
 let preparedDrawStatePersistScheduled = false;
-let cloudPlayerStateReady = !CLOUD_API_BASE_URL || CLOUD_API_BASE_URL === "mock" || MANAGER_MODE;
+let cloudPlayerStateReady = !CLOUD_API_BASE_URL || MANAGER_MODE;
+let cloudPlayerSyncPhase = cloudPlayerStateReady ? "ready" : "loading";
+let cloudPlayerSyncError = "";
 const DRAW_REVEAL_OVERLAY_ENABLED = false;
 
 let PETS = [
@@ -747,6 +749,7 @@ function buildHomePriorityCard() {
 function buildHomeActionStrip() {
   const tickets = totalTickets();
   const freeDraws = remainingDailyFreeDraws();
+  const hasActivePet = Boolean(getActivePet());
   return `
     <article class="home-action-strip">
       <div>
@@ -759,7 +762,7 @@ function buildHomeActionStrip() {
         <button class="secondary-button" type="button" data-view="collection">看卡片庫</button>
         <button class="secondary-button" type="button" data-view="bag">看背包</button>
       </div>
-      <p class="small-text">主寵助力已開啟；卡池只顯示本月節奏，不公開精確機率。</p>
+      <p class="small-text">${hasActivePet ? "主寵助力已開啟" : "取得主寵後開啟助力"}；卡池只顯示本月節奏，不公開精確機率。</p>
     </article>
   `;
 }
@@ -780,7 +783,7 @@ function buildHomeFunctionDock() {
     { view: "gacha", label: "抽卡", value: tickets > 0 ? `${tickets} 次` : "快解鎖", hot: tickets > 0 },
     { view: "collection", label: "卡片庫", value: `${ownedCount}/${PETS.length}` },
     { view: "bag", label: "背包", value: homeBagSummaryText() },
-    { view: "collection", label: "寵物", value: pet?.name || "夥伴" },
+    { view: "collection", label: "寵物", value: pet?.name || "尚未取得" },
   ];
   return `
     <nav class="home-function-dock" aria-label="功能頁">
@@ -1367,13 +1370,15 @@ function yesterdaySettlementCue() {
 }
 
 function homeOpeningGreetingMarkup() {
+  const pet = getActivePet();
+  if (!pet) return "";
   const opening = readHomeOpeningState();
   if (!opening.firstOpenToday) return "";
   const streakText = opening.openStreak >= 3 ? `連續開啟 ${opening.openStreak} 天，火種還在。` : "今天先補一件最短任務。";
   const settlementCue = yesterdaySettlementCue();
   return `
     <div class="home-greeting-card is-${escapeHtml(opening.tone)}" aria-live="polite">
-      <strong>${escapeHtml(getActivePet()?.name || "你的夥伴")}回來了</strong>
+      <strong>${escapeHtml(pet.name)}回來了</strong>
       <span>${escapeHtml(settlementCue || streakText)}</span>
     </div>
   `;
@@ -1684,7 +1689,7 @@ function buildHomeHelpDrawer(metricsSource = {}) {
 function buildHomeHeroPanel(metricsSource = {}, periodKey = currentPeriodKey(), priority = buildHomePriorityCard()) {
   const metrics = normalizeGameMetrics(metricsSource);
   const pet = getActivePet();
-  const owned = getOwned(pet.pet_id);
+  const owned = pet ? getOwned(pet.pet_id) : null;
   const tickets = totalTickets();
   const freeDraws = remainingDailyFreeDraws();
   const opening = readHomeOpeningState();
@@ -1693,15 +1698,15 @@ function buildHomeHeroPanel(metricsSource = {}, periodKey = currentPeriodKey(), 
   const drawProgress = tickets > 0
     ? { percent: 100, label: `可抽 ${tickets} 次`, unlockText: "先把抽卡機會用掉" }
     : nextBestTicketProgress(state.metrics);
-  const nextLevelGoal = buildActivePetGrowthGoals(pet, owned).find((goal) => goal.title === "下一級");
+  const nextLevelGoal = pet ? buildActivePetGrowthGoals(pet, owned).find((goal) => goal.title === "下一級") : null;
   const petGrowthCue = nextLevelGoal?.detail || "行程養等級，成果推覺醒";
   const petLevel = Number(owned?.level || 1);
   const petExp = Math.max(0, Number(owned?.exp || 0));
   const petExpNeed = expNeeded(petLevel);
   const petExpPercent = progressPercent(Math.min(petExp, petExpNeed), petExpNeed);
   const petHeroClass = owned?.awakened || pet?.rarity === "SSR" || pet?.rarity === "UR" ? " is-rare" : "";
-  const petStarCue = homePetStarCue(pet, owned);
-  const petDrawCue = homePetDrawCue(metrics);
+  const petStarCue = pet ? homePetStarCue(pet, owned) : "完整寵物或孵化後加入";
+  const petDrawCue = pet ? homePetDrawCue(metrics) : "蛋與精華會先保留在背包";
   const nextQuest = actionableDailyQuest(state.metrics) || actionableDailyQuest(state.metrics, { allowZeroReward: true });
   const zeroDrawCue = `${questActionLabel(nextQuest)}，抽卡入口就會亮。`;
   const nextDrawCue = tickets > 0
@@ -1725,20 +1730,28 @@ function buildHomeHeroPanel(metricsSource = {}, periodKey = currentPeriodKey(), 
         </div>
       </div>
       ${buildHomeStatusBoard(metrics)}
-      <button class="home-pet-window${petHeroClass}" type="button" data-pet-talk="1" aria-label="和目前主寵互動">
-        ${petVisual(pet, owned, "large")}
-        <span>${escapeHtml(pet.name)} · Lv.${owned?.level || 1}</span>
-        <div class="home-pet-exp" aria-label="主寵經驗 ${petExp}/${petExpNeed}">
-          <i style="width:${petExpPercent}%"></i>
-        </div>
-        <small>${escapeHtml(petGrowthCue)}</small>
-        <div class="home-pet-cues">
-          <b>${escapeHtml(petStarCue)}</b>
-          <small>${escapeHtml(petDrawCue)}</small>
-        </div>
-        <em id="petTalkBubble" class="pet-talk-bubble" hidden></em>
-      </button>
-      <button class="text-button home-change-pet" type="button" data-view="collection">更換夥伴</button>
+      ${pet && owned ? `
+        <button class="home-pet-window${petHeroClass}" type="button" data-pet-talk="1" aria-label="和目前主寵互動">
+          ${petVisual(pet, owned, "large")}
+          <span>${escapeHtml(pet.name)} · Lv.${owned.level || 1}</span>
+          <div class="home-pet-exp" aria-label="主寵經驗 ${petExp}/${petExpNeed}">
+            <i style="width:${petExpPercent}%"></i>
+          </div>
+          <small>${escapeHtml(petGrowthCue)}</small>
+          <div class="home-pet-cues">
+            <b>${escapeHtml(petStarCue)}</b>
+            <small>${escapeHtml(petDrawCue)}</small>
+          </div>
+          <em id="petTalkBubble" class="pet-talk-bubble" hidden></em>
+        </button>
+      ` : `
+        <article class="home-pet-window pet-empty-stage" aria-label="尚未取得主寵">
+          <span class="summon-kicker">尚未取得主寵</span>
+          <strong>蛋與精華會先留在背包</strong>
+          <small>抽到完整寵物，或集齊蛋與精華孵化後，才會加入卡片庫成為夥伴。</small>
+        </article>
+      `}
+      <button class="text-button home-change-pet" type="button" data-view="${pet ? "collection" : "bag"}">${pet ? "更換夥伴" : "查看蛋與精華"}</button>
       ${homeOpeningGreetingMarkup()}
       <div class="home-draw-now">
         <button class="secondary-button home-draw-button" type="button" ${drawButtonAttr}>${drawLabel}</button>
@@ -2799,7 +2812,7 @@ function cloudPlayerStateToSnapshot(data = {}) {
     settlementSummary: data.latestSettlement || data.latest_settlement || data.settlement_summary || data.settlementSummary || data.latest_reward_event || data.reward_summary || data.rewardSummary || null,
     replaceInventory: true,
   };
-  if (data.active_pet?.pet_id) snapshot.activePetId = data.active_pet.pet_id;
+  snapshot.activePetId = String(data.active_pet?.pet_id || "");
   return snapshot;
 }
 
@@ -2812,7 +2825,7 @@ function applyCloudPlayerState(data = {}, options = {}) {
   }
   const snapshot = cloudPlayerStateToSnapshot(data);
   applyBackendEmployeeSnapshot(snapshot, { persist: false, render: false });
-  if (snapshot.activePetId && getPet(snapshot.activePetId)) state.activePetId = snapshot.activePetId;
+  state.activePetId = resolveOwnedActivePetId(snapshot.activePetId, state.collection);
   if (snapshot.settlementSummary) state.latestSettlementSummary = snapshot.settlementSummary;
   state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-playerState" : "cloud-playerState";
   if (options.persist !== false) saveState();
@@ -3266,8 +3279,47 @@ async function postCloudEnvelope(action, payload = {}) {
   return fetchCloudEnvelope(action, body);
 }
 
+function playerCloudSyncRequired() {
+  return Boolean(CLOUD_API_BASE_URL && !MANAGER_MODE && !PROFILE.loginRequired);
+}
+
+function cloudSyncGateModel(options = {}) {
+  const required = Boolean(options.required);
+  const ready = Boolean(options.ready);
+  const phase = String(options.phase || (ready ? "ready" : "loading"));
+  const error = String(options.error || "");
+  const visible = required && !ready;
+  const failed = visible && phase === "error";
+  return {
+    visible,
+    failed,
+    title: failed ? "遊戲資料尚未同步完成" : "正在同步你的遊戲資料",
+    message: failed
+      ? "為避免顯示舊券或舊寵物，目前不會開啟本機暫存畫面。請重新同步。"
+      : "券、背包與寵物確認完成後才會開啟畫面。",
+    detail: failed ? error : "",
+    retryVisible: failed,
+    switchVisible: visible,
+  };
+}
+
+function validCloudPlayerStateData(data) {
+  return Boolean(
+    isPlainObject(data) &&
+    isPlainObject(data.resources) &&
+    isPlainObject(data.collection) &&
+    Array.isArray(data.collection.owned)
+  );
+}
+
 async function loadCloudState() {
   if (!CLOUD_API_BASE_URL) return false;
+  if (!MANAGER_MODE) {
+    cloudPlayerStateReady = false;
+    cloudPlayerSyncPhase = "loading";
+    cloudPlayerSyncError = "";
+    renderShellMode();
+  }
   try {
     const action = MANAGER_MODE ? "managerDashboard" : "playerState";
     const managerKey = MANAGER_MODE ? getCloudManagerKey() : "";
@@ -3280,11 +3332,20 @@ async function loadCloudState() {
       : { uid: PROFILE.employeeId || PROFILE.userKey, period: currentPeriodKey(), draw_session_id: readStoredDrawSessionId() };
     if (!MANAGER_MODE && PROFILE.loginRequired) return false;
     const data = cloudEnvelopeData(await fetchCloudEnvelope(action, params), action);
-    if (!data) return false;
-    if (!MANAGER_MODE) cloudPlayerStateReady = true;
+    if (!data) throw new Error("playerState 沒有可用資料");
+    if (!MANAGER_MODE && !validCloudPlayerStateData(data)) throw new Error("playerState 資料格式不完整");
+    if (!MANAGER_MODE) {
+      cloudPlayerStateReady = true;
+      cloudPlayerSyncPhase = "ready";
+      cloudPlayerSyncError = "";
+    }
     return MANAGER_MODE ? applyCloudManagerDashboard(data) : applyCloudPlayerState(data);
   } catch (error) {
-    if (!MANAGER_MODE) cloudPlayerStateReady = false;
+    if (!MANAGER_MODE) {
+      cloudPlayerStateReady = false;
+      cloudPlayerSyncPhase = "error";
+      cloudPlayerSyncError = String(error?.message || "雲端連線失敗");
+    }
     state.manager.cloudStatus = `cloud-error:${error.message || "unknown"}`;
     saveState();
     render();
@@ -3967,8 +4028,16 @@ function getOwned(petId) {
   return state.collection[petId];
 }
 
+function resolveOwnedActivePetId(requestedId = "", collection = state.collection) {
+  const ownedCollection = isPlainObject(collection) ? collection : {};
+  const requested = String(requestedId || "");
+  if (requested && ownedCollection[requested] && getPet(requested)) return requested;
+  return Object.keys(ownedCollection).find((petId) => ownedCollection[petId] && getPet(petId)) || "";
+}
+
 function getActivePet() {
-  return getPet(state.activePetId) || PETS[0];
+  const ownedActiveId = resolveOwnedActivePetId(state.activePetId, state.collection);
+  return ownedActiveId ? getPet(ownedActiveId) : null;
 }
 
 function getStorylines() {
@@ -4173,6 +4242,10 @@ function isViewActive(view) {
 }
 
 function ensureStarterPet() {
+  if (CLOUD_API_BASE_URL) {
+    state.activePetId = resolveOwnedActivePetId(state.activePetId, state.collection);
+    return;
+  }
   const activeExists = PETS.some((pet) => pet.pet_id === state.activePetId);
   const starter = PETS.find((pet) => pet.can_be_drawn && pet.rarity === "N") || PETS.find((pet) => pet.can_be_drawn) || PETS[0];
   if (!activeExists && starter) state.activePetId = starter.pet_id;
@@ -4864,7 +4937,7 @@ function findFirstActionableCollection() {
 
 function buildEntryExperienceCue() {
   const pet = getActivePet();
-  const owned = getOwned(pet.pet_id);
+  const owned = pet ? getOwned(pet.pet_id) : null;
   const tickets = totalTickets();
   const settled = Boolean(state.dailySettlements?.[todayKey()]?.awarded);
   const action = findFirstActionableCollection();
@@ -4886,6 +4959,16 @@ function buildEntryExperienceCue() {
       view: "gacha",
       label: "去抽卡",
       tone: "hot",
+    };
+  }
+  if (!pet || !owned) {
+    return {
+      kicker: "等待第一隻夥伴",
+      title: `${PROFILE.agent}，蛋與精華已先替你保留。`,
+      detail: "抽到完整寵物，或集齊蛋與精華孵化後，才會開啟主寵養成與心願。",
+      view: "bag",
+      label: "查看蛋與精華",
+      tone: "growth",
     };
   }
   const wish = buildPetWish(state.metrics, pet);
@@ -5381,7 +5464,7 @@ function calculateRewards(rawMetrics, pet = getActivePet(), includeWish = true) 
       team_core: contractCount > 0 ? 2 : 0,
     },
   };
-  if (!includeWish) return { ...baseRewards, wish: null };
+  if (!includeWish || !pet) return { ...baseRewards, wish: null };
   const wish = buildPetWish(metrics, pet);
   return wish.done ? applyPetWishBonus(baseRewards, wish) : { ...baseRewards, wish: null };
 }
@@ -5840,9 +5923,18 @@ function buildLocalDrawResult(pool) {
   };
 }
 
+function drawCloudGateModel(apiBaseUrl = CLOUD_API_BASE_URL, ready = cloudPlayerStateReady) {
+  const hasCloud = Boolean(apiBaseUrl);
+  return {
+    blocked: hasCloud && !ready,
+    preparedSequenceRequired: hasCloud && apiBaseUrl !== "mock",
+  };
+}
+
 function canStartDraw(poolKey) {
-  const productionSequenceRequired = Boolean(CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock");
-  if (productionSequenceRequired && !cloudPlayerStateReady) return false;
+  const cloudGate = drawCloudGateModel();
+  const productionSequenceRequired = cloudGate.preparedSequenceRequired;
+  if (cloudGate.blocked) return false;
   if (poolKey === "contract_guarantee") {
     return contractGuaranteeRemainingDraws() > 0 && Boolean(nextPreparedCloudDraw(poolKey));
   }
@@ -6693,7 +6785,7 @@ function spendMaterials(required) {
 }
 
 function render() {
-  renderShellMode();
+  if (renderShellMode() !== "app") return;
   renderProfile();
   renderReportPeriodInput();
   renderActivePet();
@@ -6718,12 +6810,30 @@ function render() {
 
 function renderShellMode() {
   const loginScreen = document.getElementById("loginScreen");
+  const playerSyncScreen = document.getElementById("playerSyncScreen");
   const appShell = document.getElementById("appShell");
   const managerDashboard = document.getElementById("managerDashboard");
   const isLoginRequired = Boolean(PROFILE.loginRequired && !MANAGER_MODE);
-  if (loginScreen) loginScreen.hidden = !isLoginRequired;
-  if (appShell) appShell.hidden = isLoginRequired;
-  if (managerDashboard) managerDashboard.hidden = !MANAGER_MODE || isLoginRequired;
+  const syncModel = cloudSyncGateModel({
+    required: playerCloudSyncRequired(),
+    ready: cloudPlayerStateReady,
+    phase: cloudPlayerSyncPhase,
+    error: cloudPlayerSyncError,
+  });
+  const mode = isLoginRequired ? "login" : syncModel.visible ? "sync" : "app";
+  if (loginScreen) loginScreen.hidden = mode !== "login";
+  if (playerSyncScreen) playerSyncScreen.hidden = mode !== "sync";
+  if (appShell) appShell.hidden = mode !== "app";
+  if (managerDashboard) managerDashboard.hidden = !MANAGER_MODE || mode !== "app";
+  const syncTitle = document.getElementById("playerSyncTitle");
+  const syncMessage = document.getElementById("playerSyncMessage");
+  const syncRetry = document.getElementById("playerSyncRetryBtn");
+  const syncSwitch = document.getElementById("playerSyncSwitchBtn");
+  if (syncTitle) syncTitle.textContent = syncModel.title;
+  if (syncMessage) syncMessage.textContent = syncModel.detail ? `${syncModel.message}（${syncModel.detail}）` : syncModel.message;
+  if (syncRetry) syncRetry.hidden = !syncModel.retryVisible;
+  if (syncSwitch) syncSwitch.hidden = !syncModel.switchVisible;
+  playerSyncScreen?.classList?.toggle("is-error", syncModel.failed);
   document.body?.classList?.toggle("is-manager-mode", MANAGER_MODE);
   document.body?.classList?.toggle("is-employee-login-required", isLoginRequired);
   const maintenanceMenu = document.getElementById("maintenanceMenu");
@@ -6739,6 +6849,7 @@ function renderShellMode() {
     managerVersion.hidden = !MANAGER_MODE;
     managerVersion.textContent = `版本 ${APP_VERSION}`;
   }
+  return mode;
 }
 
 function renderReportPeriodInput() {
@@ -6802,11 +6913,28 @@ function renderProfile() {
 
 function renderActivePet() {
   const pet = getActivePet();
-  const owned = getOwned(pet.pet_id);
+  const owned = pet ? getOwned(pet.pet_id) : null;
+  const stage = document.getElementById("activePetStage");
+  const status = document.getElementById("activePetStatus");
+  if (!stage || !status) return;
+  if (!pet || !owned) {
+    stage.innerHTML = `
+      <article class="pet-empty-stage">
+        <span class="summon-kicker">尚未取得主寵</span>
+        <strong>第一隻完整寵物正在等你</strong>
+      </article>
+    `;
+    status.innerHTML = `
+      <div class="pet-name-row"><h2>尚未取得主寵</h2></div>
+      <p class="small-text">抽到完整寵物，或集齊蛋與精華孵化後，才能設為夥伴。</p>
+      <p class="pet-compact-note">蛋、精華與素材都會保留在背包，不會被算成已擁有寵物。</p>
+    `;
+    return;
+  }
   const expMax = expNeeded(owned?.level || 1);
   const expPercent = Math.min(100, (((owned?.exp || 0) / expMax) * 100).toFixed(1));
-  document.getElementById("activePetStage").innerHTML = petVisual(pet, owned, "large");
-  document.getElementById("activePetStatus").innerHTML = `
+  stage.innerHTML = petVisual(pet, owned, "large");
+  status.innerHTML = `
     <div class="pet-name-row">
       <h2>${pet.name}</h2>
       <span class="rarity-badge rarity-${pet.rarity}">${pet.rarity}</span>
@@ -6916,7 +7044,7 @@ function renderProgressDashboard() {
   const periodPill = document.getElementById("progressPeriodPill");
   if (periodPill) periodPill.textContent = progress.period || currentPeriodKey();
   const pet = getActivePet();
-  const owned = getOwned(pet.pet_id);
+  const owned = pet ? getOwned(pet.pet_id) : null;
   const growthFocus = buildGrowthFocus(pet, owned);
   const awakenFocus = buildAwakenFocus(pet, owned);
   const drawFocus = {
@@ -7004,6 +7132,16 @@ function renderPetWish() {
   const target = document.getElementById("petWish");
   if (!target) return;
   const pet = getActivePet();
+  const owned = pet ? getOwned(pet.pet_id) : null;
+  if (!pet || !owned) {
+    target.innerHTML = `
+      <article class="pet-wish-card pet-empty-stage">
+        <div class="team-topline"><div><span class="summon-kicker">主寵今日心願</span><strong>取得主寵後開啟</strong></div></div>
+        <p>蛋與精華會留在背包；完整寵物加入卡片庫後，才會出現專屬心願。</p>
+      </article>
+    `;
+    return;
+  }
   const wish = buildPetWish(state.metrics, pet);
   target.innerHTML = `
     <article class="pet-wish-card ${wish.done ? "is-done" : ""}" data-wish="${escapeHtml(wish.key)}">
@@ -8771,8 +8909,20 @@ function renderCardGameBoard() {
   const target = document.getElementById("cardGameBoard");
   if (!target) return;
   const pet = getActivePet();
-  const owned = getOwned(pet.pet_id);
+  const owned = pet ? getOwned(pet.pet_id) : null;
   const progress = state.progress || buildProgressSnapshot(state.metrics);
+  if (!pet || !owned) {
+    target.innerHTML = `
+      <article class="cardgame-card pet-empty-stage">
+        <div><span class="summon-kicker">今日手牌</span><strong>尚未取得主寵</strong><p>先抽到完整寵物，或到背包孵化第一隻夥伴。</p></div>
+      </article>
+      <div class="cardgame-actions">
+        <button class="secondary-button" type="button" data-view="gacha">去看抽卡額度</button>
+        <button class="secondary-button" type="button" data-view="bag">查看蛋與精華</button>
+      </div>
+    `;
+    return;
+  }
   target.innerHTML = `
     <article class="cardgame-card">
       <div class="mini-pet">${petVisual(pet, owned, "small")}</div>
@@ -9175,9 +9325,13 @@ document.addEventListener("click", (event) => {
     });
   }
   if (target.dataset.active) {
-    state.activePetId = target.dataset.active;
-    saveState();
-    render();
+    if (CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock") {
+      runCloudPetAction("set_active", target.dataset.active);
+    } else if (getOwned(target.dataset.active)) {
+      state.activePetId = target.dataset.active;
+      saveState();
+      render();
+    }
   }
   if (target.dataset.star) upgradeStar(target.dataset.star);
   if (target.dataset.hatch) hatchPet(target.dataset.hatch);
@@ -9233,6 +9387,14 @@ document.getElementById("managerDataPeriod")?.addEventListener("change", async (
 document.getElementById("employeeLoginForm")?.addEventListener("submit", (event) => {
   event.preventDefault();
   handleEmployeeLogin(event.currentTarget);
+});
+
+document.getElementById("playerSyncRetryBtn")?.addEventListener("click", () => {
+  loadCloudState();
+});
+
+document.getElementById("playerSyncSwitchBtn")?.addEventListener("click", () => {
+  switchEmployee();
 });
 
 const managerDropZone = document.getElementById("managerDropZone");

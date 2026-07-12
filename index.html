@@ -24,7 +24,7 @@
     <link rel="icon" href="./assets/app-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./assets/app-icon-512.png" />
     <link rel="manifest" href="./site.webmanifest" />
-    <link rel="stylesheet" href="./styles.css?v=20260711-pool-ledger-v56" />
+    <link rel="stylesheet" href="./styles.css?v=20260712-cloud-trust-v57" />
   </head>
   <body>
     <section id="loginScreen" class="login-screen" hidden>
@@ -42,7 +42,21 @@
       </form>
     </section>
 
-    <main id="appShell" class="app-shell">
+    <section id="playerSyncScreen" class="login-screen player-sync-screen" aria-live="polite" hidden>
+      <div class="login-card player-sync-card">
+        <img src="./assets/app-icon-192.png" alt="" class="login-icon" />
+        <p class="eyebrow">房仲精靈</p>
+        <div class="player-sync-orbit" aria-hidden="true"></div>
+        <h1 id="playerSyncTitle">正在同步你的遊戲資料</h1>
+        <p id="playerSyncMessage">券、背包與寵物確認完成後才會開啟畫面。</p>
+        <div class="player-sync-actions">
+          <button id="playerSyncRetryBtn" class="primary-button" type="button" hidden>重新同步</button>
+          <button id="playerSyncSwitchBtn" class="secondary-button" type="button" hidden>更換員編</button>
+        </div>
+      </div>
+    </section>
+
+    <main id="appShell" class="app-shell" hidden>
       <header class="topbar">
         <div>
           <p class="eyebrow" id="branchLabel">樹林店</p>
@@ -287,6 +301,6 @@
       </section>
     </div>
 
-    <script src="./app.js?v=20260711-pool-ledger-v56"></script>
+    <script src="./app.js?v=20260712-cloud-trust-v57"></script>
   </body>
 </html>
