@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v59";
+const APP_VERSION = "v60";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -37,7 +37,7 @@ const PLAYER_SYNC_RETRY_DELAY_MS = 650;
 const PLAYER_SYNC_MAX_ATTEMPTS = 2;
 const PET_CONTENT_CACHE_TIMEOUT_MS = 1000;
 const PET_CONTENT_TIMEOUT_MS = 6000;
-const PET_CONTENT_MANIFEST_URL = "./pet_content_manifest.json?v=20260712-sync-recovery-v59";
+const PET_CONTENT_MANIFEST_URL = "./pet_content_manifest.json?v=20260712-ready-pools-first-v60";
 let pendingPreparedDrawClaims = [];
 let activePreparedDrawClaims = [];
 let drawClaimBatchTimer = null;
@@ -5415,9 +5415,9 @@ function poolPriority(pool) {
   const tickets = Number(state.tickets?.[pool.key] || 0);
   const guarantee = integratedGuaranteeForPool(pool.key);
   const guaranteeReady = guarantee ? integratedGuaranteeBalance(guarantee) > 0 : false;
-  if (pool.key === pinnedDrawPoolKey) return 1000;
-  if (tickets > 0 || guaranteeReady) return 100;
-  return 0;
+  const readyTier = tickets > 0 || guaranteeReady ? 100 : 0;
+  const currentResultBoost = pool.key === pinnedDrawPoolKey ? 10 : 0;
+  return readyTier + currentResultBoost;
 }
 
 function poolExperienceCue(pool, candidates, unlocked) {
