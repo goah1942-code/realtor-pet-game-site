@@ -4622,7 +4622,7 @@ function petStateSummaryFromRewards(rewards = {}) {
   if (rewards.petGrowth) return petGrowthSummary(rewards.petGrowth);
   const pet = getActivePet();
   const owned = pet ? getOwned(pet.pet_id) : null;
-  if (!pet || !owned) return "主寵狀態等待資料同步";
+  if (!pet || !owned) return "尚未取得主寵";
   return `${pet.name} Lv.${owned.level || 1}，${homePetStarCue(pet, owned)}`;
 }
 
@@ -4856,7 +4856,15 @@ function buildGrowthFocus(pet = getActivePet(), owned = pet ? getOwned(pet.pet_i
 }
 
 function buildAwakenFocus(pet = getActivePet(), owned = pet ? getOwned(pet.pet_id) : null) {
-  if (!pet || !owned || !pet.available_forms?.includes("覺醒型")) {
+  if (!pet || !owned) {
+    return {
+      title: "成果覺醒線",
+      detail: "取得主寵後開啟覺醒線。",
+      value: "待取得",
+      tone: "soft",
+    };
+  }
+  if (!pet.available_forms?.includes("覺醒型")) {
     return {
       title: "成果覺醒線",
       detail: "這隻夥伴暫時沒有覺醒需求，先累積卡片庫。",
