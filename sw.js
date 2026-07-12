@@ -1,12 +1,12 @@
 const CACHE_PREFIX = "realtor-pet-game";
-const CACHE_NAME = `${CACHE_PREFIX}-v50`;
+const CACHE_NAME = `${CACHE_PREFIX}-v51`;
 const CORE_ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=20260712-instant-inventory-v58",
-  "./app.js?v=20260712-instant-inventory-v58",
+  "./styles.css?v=20260712-sync-recovery-v59",
+  "./app.js?v=20260712-sync-recovery-v59",
   "./site.webmanifest",
-  "./pet_content_manifest.json",
+  "./pet_content_manifest.json?v=20260712-sync-recovery-v59",
   "./assets/app-icon.svg",
   "./assets/app-icon-192.png",
   "./assets/app-icon-512.png",
@@ -40,6 +40,11 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+
+  if (url.pathname.endsWith("/pet_content_manifest.json")) {
+    event.respondWith(cacheFirst(request));
+    return;
+  }
 
   if (request.mode === "navigate" || isRuntimeFile(url.pathname)) {
     event.respondWith(networkFirst(request));

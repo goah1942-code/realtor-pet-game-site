@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v58";
+const APP_VERSION = "v59";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -31,6 +31,13 @@ let pinnedDrawPoolKey = "";
 let drawViewportFollowToken = 0;
 let lastDrawRevealLatencyMs = 0;
 const DRAW_CLAIM_BATCH_DELAY_MS = 250;
+const PLAYER_SYNC_TIMEOUT_MS = 10000;
+const PLAYER_SYNC_RETRY_TIMEOUT_MS = 8000;
+const PLAYER_SYNC_RETRY_DELAY_MS = 650;
+const PLAYER_SYNC_MAX_ATTEMPTS = 2;
+const PET_CONTENT_CACHE_TIMEOUT_MS = 1000;
+const PET_CONTENT_TIMEOUT_MS = 6000;
+const PET_CONTENT_MANIFEST_URL = "./pet_content_manifest.json?v=20260712-sync-recovery-v59";
 let pendingPreparedDrawClaims = [];
 let activePreparedDrawClaims = [];
 let drawClaimBatchTimer = null;
@@ -41,6 +48,12 @@ let preparedDrawStatePersistScheduled = false;
 let cloudPlayerStateReady = !CLOUD_API_BASE_URL || MANAGER_MODE;
 let cloudPlayerSyncPhase = cloudPlayerStateReady ? "ready" : "loading";
 let cloudPlayerSyncError = "";
+let cloudPlayerSyncGeneration = 0;
+let cloudPlayerSyncInFlight = null;
+let cloudPlayerSyncAbortController = null;
+let petContentReady = false;
+let petContentSyncError = "";
+let petContentLoadInFlight = null;
 const DRAW_REVEAL_OVERLAY_ENABLED = false;
 
 let PETS = [
@@ -1910,6 +1923,14 @@ function storeDrawSessionId(sessionId) {
   }
 }
 
+function ensureStoredDrawSessionId() {
+  const existing = readStoredDrawSessionId();
+  if (existing) return existing;
+  const created = randomClientId("draw_session");
+  storeDrawSessionId(created);
+  return created;
+}
+
 function clearStoredDrawSession() {
   storeDrawSessionId("");
 }
@@ -2690,6 +2711,7 @@ function handleEmployeeLogin(form) {
 }
 
 function switchEmployee() {
+  cancelCloudPlayerSync();
   clearEmployeeLogin();
   reloadWithoutQuery();
 }
@@ -3249,17 +3271,23 @@ function mockCloudEnvelope(action, payload = {}) {
   return { ok: false, action, data: null, warnings: [], errors: [{ code: "MOCK_ACTION_NOT_FOUND", message: action }] };
 }
 
-async function fetchCloudEnvelope(action, params = {}) {
+async function fetchCloudEnvelope(action, params = {}, options = {}) {
   if (!CLOUD_API_BASE_URL) return null;
-  if (CLOUD_API_BASE_URL === "mock") return mockCloudEnvelope(action);
+  if (CLOUD_API_BASE_URL === "mock") return mockCloudEnvelope(action, params);
   if (typeof fetch !== "function") return null;
   const url = new URL(CLOUD_API_BASE_URL);
   url.searchParams.set("action", action);
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
   });
-  const response = await fetch(url.href, { cache: "no-store" });
-  if (!response.ok) throw new Error(`Cloud API ${action} ${response.status}`);
+  const requestOptions = { cache: "no-store" };
+  if (options.signal) requestOptions.signal = options.signal;
+  const response = await fetch(url.href, requestOptions);
+  if (!response.ok) {
+    const error = cloudRequestError("CLOUD_HTTP_ERROR", `Cloud API ${action} ${response.status}`);
+    error.status = Number(response.status || 0);
+    throw error;
+  }
   return response.json();
 }
 
@@ -3296,13 +3324,26 @@ function cloudSyncGateModel(options = {}) {
   const error = String(options.error || "");
   const visible = required && !ready;
   const failed = visible && phase === "error";
+  const retrying = visible && phase === "retrying";
+  const contentLoading = visible && phase === "content-loading";
   return {
     visible,
     failed,
-    title: failed ? "遊戲資料尚未同步完成" : "正在同步你的遊戲資料",
+    retrying,
+    title: failed
+      ? "遊戲資料尚未同步完成"
+      : retrying
+        ? "正在重新同步你的遊戲資料"
+        : contentLoading
+          ? "正在準備寵物卡片資料"
+          : "正在同步你的遊戲資料",
     message: failed
       ? "為避免顯示舊券或舊寵物，目前不會開啟本機暫存畫面。請重新同步。"
-      : "券、背包與寵物確認完成後才會開啟畫面。",
+      : retrying
+        ? "第一次連線較久，系統正在自動重試一次。"
+        : contentLoading
+          ? "卡片資料與正式資產都準備完成後才會開啟畫面。"
+          : "券、背包與寵物確認完成後才會開啟畫面。",
     detail: failed ? error : "",
     retryVisible: failed,
     switchVisible: visible,
@@ -3310,53 +3351,218 @@ function cloudSyncGateModel(options = {}) {
 }
 
 function validCloudPlayerStateData(data) {
+  const drawSession = isPlainObject(data?.draw_session) ? data.draw_session : data?.resources?.draw_session;
   return Boolean(
     isPlainObject(data) &&
     isPlainObject(data.resources) &&
     isPlainObject(data.collection) &&
-    Array.isArray(data.collection.owned)
+    Array.isArray(data.collection.owned) &&
+    isPlainObject(drawSession) &&
+    String(drawSession.session_id || "") &&
+    Array.isArray(drawSession.entries)
   );
 }
 
-async function loadCloudState() {
-  if (!CLOUD_API_BASE_URL) return false;
-  if (!MANAGER_MODE) {
-    cloudPlayerStateReady = false;
-    cloudPlayerSyncPhase = "loading";
+function cloudRequestError(code, message) {
+  const error = new Error(String(message || "雲端連線失敗"));
+  error.code = String(code || "CLOUD_REQUEST_FAILED");
+  return error;
+}
+
+function runRequestWithDeadline(requestFactory, options = {}) {
+  const timeoutMs = Math.max(1, Number(options.timeoutMs || 1));
+  const timeoutCode = String(options.timeoutCode || "CLOUD_SYNC_TIMEOUT");
+  const timeoutMessage = String(options.timeoutMessage || `雲端連線超過 ${Math.ceil(timeoutMs / 1000)} 秒`);
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      callback(value);
+    };
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        options.onTimeout?.();
+      } catch {
+        // The deadline still wins even if the optional abort hook is unavailable.
+      }
+      reject(cloudRequestError(timeoutCode, timeoutMessage));
+    }, timeoutMs);
+    Promise.resolve()
+      .then(requestFactory)
+      .then((value) => finish(resolve, value), (error) => finish(reject, error));
+  });
+}
+
+function cloudEnvelopeDataOrThrow(envelope, action, requestId = "") {
+  if (!isPlainObject(envelope)) throw cloudRequestError("CLOUD_RESPONSE_INVALID", `${action} 回應格式不完整`);
+  if (envelope.action && envelope.action !== action) throw cloudRequestError("CLOUD_RESPONSE_MISMATCH", `${action} 回應類型不一致`);
+  if (requestId && CLOUD_API_BASE_URL !== "mock" && String(envelope.request_id || "") !== requestId) {
+    throw cloudRequestError("CLOUD_RESPONSE_MISMATCH", `${action} 回應識別碼不一致`);
+  }
+  if (envelope.ok !== true) {
+    const firstError = Array.isArray(envelope.errors) ? envelope.errors[0] : null;
+    throw cloudRequestError(firstError?.code || "CLOUD_API_ERROR", firstError?.message || `${action} 沒有可用資料`);
+  }
+  if (!isPlainObject(envelope.data)) throw cloudRequestError("CLOUD_RESPONSE_INVALID", `${action} 沒有可用資料`);
+  return envelope.data;
+}
+
+function validCloudPlayerStateIdentity(data, uid, period) {
+  const responseUid = cleanEmployeeId(data?.player?.uid || "");
+  const responsePeriod = normalizeReportPeriodKey(data?.period || "");
+  return responseUid === cleanEmployeeId(uid) && responsePeriod === normalizeReportPeriodKey(period);
+}
+
+function normalizeCloudPlayerSyncError(error) {
+  if (typeof error?.code === "string" && error.code) return error;
+  const name = String(error?.name || "");
+  const code = name === "AbortError" || name === "TypeError" ? "CLOUD_NETWORK_ERROR" : "CLOUD_PLAYER_STATE_FAILED";
+  const normalized = cloudRequestError(code, error?.message || "雲端連線失敗");
+  if (Number.isFinite(Number(error?.status))) normalized.status = Number(error.status);
+  return normalized;
+}
+
+function retryableCloudPlayerSyncError(error) {
+  const code = String(error?.code || "");
+  if (["PLAYER_STATE_LOCK_TIMEOUT", "CLOUD_SYNC_TIMEOUT", "CLOUD_NETWORK_ERROR"].includes(code)) return true;
+  const status = Number(error?.status || 0);
+  return code === "CLOUD_HTTP_ERROR" && (status === 408 || status === 425 || status === 429 || status >= 500);
+}
+
+function currentCloudPlayerSync(generation) {
+  return generation === cloudPlayerSyncGeneration;
+}
+
+function cancelCloudPlayerSync() {
+  cloudPlayerSyncGeneration += 1;
+  try {
+    cloudPlayerSyncAbortController?.abort?.();
+  } catch {
+    // Navigation still invalidates the generation when AbortController is unavailable.
+  }
+  cloudPlayerSyncAbortController = null;
+  cloudPlayerSyncInFlight = null;
+  cloudPlayerStateReady = false;
+}
+
+async function fetchCloudPlayerStateAttempt(params, generation, attemptIndex) {
+  const requestId = randomClientId("player-state");
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  if (currentCloudPlayerSync(generation)) cloudPlayerSyncAbortController = controller;
+  const timeoutMs = attemptIndex === 0 ? PLAYER_SYNC_TIMEOUT_MS : PLAYER_SYNC_RETRY_TIMEOUT_MS;
+  try {
+    const envelope = await runRequestWithDeadline(
+      () => fetchCloudEnvelope("playerState", { ...params, request_id: requestId }, { signal: controller?.signal }),
+      {
+        timeoutMs,
+        timeoutCode: "CLOUD_SYNC_TIMEOUT",
+        timeoutMessage: `雲端同步超過 ${Math.ceil(timeoutMs / 1000)} 秒`,
+        onTimeout: () => controller?.abort?.(),
+      },
+    );
+    if (!currentCloudPlayerSync(generation)) throw cloudRequestError("CLOUD_SYNC_STALE", "舊的同步回應已忽略");
+    const data = cloudEnvelopeDataOrThrow(envelope, "playerState", requestId);
+    if (!validCloudPlayerStateData(data)) throw cloudRequestError("PLAYER_STATE_INVALID", "playerState 資料格式不完整");
+    if (!validCloudPlayerStateIdentity(data, params.uid, params.period)) {
+      throw cloudRequestError("PLAYER_STATE_IDENTITY_MISMATCH", "playerState 員編或月份不一致");
+    }
+    return data;
+  } finally {
+    if (cloudPlayerSyncAbortController === controller) cloudPlayerSyncAbortController = null;
+  }
+}
+
+async function waitForCloudPlayerSyncRetry(generation) {
+  await new Promise((resolve) => setTimeout(resolve, PLAYER_SYNC_RETRY_DELAY_MS));
+  return currentCloudPlayerSync(generation);
+}
+
+async function runCloudPlayerStateSync(generation) {
+  const uid = cleanEmployeeId(PROFILE.employeeId || PROFILE.userKey);
+  const period = currentPeriodKey();
+  const params = { uid, period, draw_session_id: ensureStoredDrawSessionId() };
+  let lastError = cloudRequestError("CLOUD_PLAYER_STATE_FAILED", "雲端連線失敗");
+
+  for (let attemptIndex = 0; attemptIndex < PLAYER_SYNC_MAX_ATTEMPTS; attemptIndex += 1) {
+    if (!currentCloudPlayerSync(generation)) return false;
+    cloudPlayerSyncPhase = attemptIndex === 0 ? "loading" : "retrying";
     cloudPlayerSyncError = "";
     renderShellMode();
+    try {
+      const data = await fetchCloudPlayerStateAttempt(params, generation, attemptIndex);
+      if (!currentCloudPlayerSync(generation)) return false;
+      cloudPlayerStateReady = true;
+      cloudPlayerSyncPhase = "ready";
+      cloudPlayerSyncError = "";
+      const applied = applyCloudPlayerState(data, { render: false });
+      if (applied) resumePreparedDrawClaimsFromAuthoritativeState({ render: false });
+      render();
+      return applied;
+    } catch (error) {
+      if (!currentCloudPlayerSync(generation)) return false;
+      lastError = normalizeCloudPlayerSyncError(error);
+      const canRetry = attemptIndex + 1 < PLAYER_SYNC_MAX_ATTEMPTS && retryableCloudPlayerSyncError(lastError);
+      if (!canRetry) break;
+      cloudPlayerSyncPhase = "retrying";
+      state.manager.cloudStatus = `cloud-playerState-retry:${lastError.code}`;
+      renderShellMode();
+      if (!(await waitForCloudPlayerSyncRetry(generation))) return false;
+    }
   }
+
+  if (!currentCloudPlayerSync(generation)) return false;
+  cloudPlayerStateReady = false;
+  cloudPlayerSyncPhase = "error";
+  cloudPlayerSyncError = String(lastError?.message || "雲端連線失敗");
+  state.manager.cloudStatus = `cloud-error:${lastError?.code || lastError?.message || "unknown"}`;
+  saveState();
+  render();
+  return false;
+}
+
+function loadCloudPlayerState() {
+  if (PROFILE.loginRequired) return Promise.resolve(false);
+  if (cloudPlayerSyncInFlight) return cloudPlayerSyncInFlight;
+  cloudPlayerStateReady = false;
+  cloudPlayerSyncPhase = "loading";
+  cloudPlayerSyncError = "";
+  cloudPlayerSyncGeneration += 1;
+  const generation = cloudPlayerSyncGeneration;
+  renderShellMode();
+  const promise = runCloudPlayerStateSync(generation).finally(() => {
+    if (cloudPlayerSyncInFlight === promise) cloudPlayerSyncInFlight = null;
+  });
+  cloudPlayerSyncInFlight = promise;
+  return promise;
+}
+
+async function loadManagerCloudState() {
   try {
-    const action = MANAGER_MODE ? "managerDashboard" : "playerState";
-    const managerKey = MANAGER_MODE ? getCloudManagerKey() : "";
+    const action = "managerDashboard";
+    const managerKey = getCloudManagerKey();
     if (cloudManagerKeyRequired()) {
       state.manager.cloudStatus = "manager-key-required";
       return false;
     }
-    const params = MANAGER_MODE
-      ? { period: managerDashboardPeriod(), manager_key: managerKey }
-      : { uid: PROFILE.employeeId || PROFILE.userKey, period: currentPeriodKey(), draw_session_id: readStoredDrawSessionId() };
-    if (!MANAGER_MODE && PROFILE.loginRequired) return false;
+    const params = { period: managerDashboardPeriod(), manager_key: managerKey };
     const data = cloudEnvelopeData(await fetchCloudEnvelope(action, params), action);
-    if (!data) throw new Error("playerState 沒有可用資料");
-    if (!MANAGER_MODE && !validCloudPlayerStateData(data)) throw new Error("playerState 資料格式不完整");
-    if (!MANAGER_MODE) {
-      cloudPlayerStateReady = true;
-      cloudPlayerSyncPhase = "ready";
-      cloudPlayerSyncError = "";
-    }
-    return MANAGER_MODE ? applyCloudManagerDashboard(data) : applyCloudPlayerState(data);
+    if (!data) throw new Error("managerDashboard 沒有可用資料");
+    return applyCloudManagerDashboard(data);
   } catch (error) {
-    if (!MANAGER_MODE) {
-      cloudPlayerStateReady = false;
-      cloudPlayerSyncPhase = "error";
-      cloudPlayerSyncError = String(error?.message || "雲端連線失敗");
-    }
     state.manager.cloudStatus = `cloud-error:${error.message || "unknown"}`;
     saveState();
     render();
     return false;
   }
+}
+
+async function loadCloudState() {
+  if (!CLOUD_API_BASE_URL) return false;
+  return MANAGER_MODE ? loadManagerCloudState() : loadCloudPlayerState();
 }
 
 function setCloudImportStatus(message, tone = "") {
@@ -4269,22 +4475,85 @@ function ensureStarterPet() {
   }
 }
 
-async function loadExternalContent() {
-  if (typeof fetch !== "function") return;
+async function readCachedPetContentManifest() {
+  if (typeof caches !== "object" || typeof caches.match !== "function") return null;
   try {
-    const response = await fetch("./pet_content_manifest.json", { cache: "no-store" });
-    if (!response.ok) return;
+    const response = await caches.match(PET_CONTENT_MANIFEST_URL);
+    if (!response?.ok) return null;
     const manifest = await response.json();
-    if (!Array.isArray(manifest.pets) || manifest.pets.length === 0) return;
+    return Array.isArray(manifest?.pets) && manifest.pets.length ? manifest : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchPetContentManifest() {
+  let cached = null;
+  try {
+    cached = await runRequestWithDeadline(() => readCachedPetContentManifest(), {
+      timeoutMs: PET_CONTENT_CACHE_TIMEOUT_MS,
+      timeoutCode: "PET_CONTENT_CACHE_TIMEOUT",
+      timeoutMessage: "寵物卡片快取讀取逾時",
+    });
+  } catch {
+    cached = null;
+  }
+  if (cached) return cached;
+  if (typeof fetch !== "function") return null;
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  return runRequestWithDeadline(async () => {
+    const response = await fetch(PET_CONTENT_MANIFEST_URL, { cache: "no-store", signal: controller?.signal });
+    if (!response.ok) throw cloudRequestError("PET_CONTENT_HTTP_ERROR", `寵物卡片資料 ${response.status}`);
+    return response.json();
+  }, {
+    timeoutMs: PET_CONTENT_TIMEOUT_MS,
+    timeoutCode: "PET_CONTENT_TIMEOUT",
+    timeoutMessage: `寵物卡片資料載入超過 ${Math.ceil(PET_CONTENT_TIMEOUT_MS / 1000)} 秒`,
+    onTimeout: () => controller?.abort?.(),
+  });
+}
+
+async function runExternalContentLoad() {
+  let loaded = false;
+  try {
+    const manifest = await fetchPetContentManifest();
+    if (!Array.isArray(manifest?.pets) || manifest.pets.length === 0) {
+      throw cloudRequestError("PET_CONTENT_INVALID", "寵物卡片資料格式不完整");
+    }
     PETS = filterRuntimePets(manifest.pets.map(normalizeExternalPet));
     STORYLINES = filterRuntimeStorylines(normalizeStorylines(manifest.storylines));
     ensureStarterPet();
     ensureCollectionStoryline();
     saveState();
+    if (cloudPlayerStateReady) preloadPreparedDrawAssets();
+    loaded = true;
+    petContentSyncError = "";
+  } catch (error) {
+    petContentSyncError = String(error?.message || "寵物卡片資料載入失敗");
+  } finally {
+    petContentReady = loaded;
     render();
-  } catch {
-    // The static file can still run directly from disk with built-in demo pets.
   }
+  return loaded;
+}
+
+function loadExternalContent() {
+  if (petContentLoadInFlight) return petContentLoadInFlight;
+  petContentReady = false;
+  petContentSyncError = "";
+  renderShellMode();
+  const promise = runExternalContentLoad().finally(() => {
+    if (petContentLoadInFlight === promise) petContentLoadInFlight = null;
+  });
+  petContentLoadInFlight = promise;
+  return promise;
+}
+
+function retryPlayerBootstrap() {
+  const pending = [];
+  if (!petContentReady) pending.push(loadExternalContent());
+  if (!cloudPlayerStateReady) pending.push(loadCloudState());
+  return Promise.all(pending);
 }
 
 function normalizeStorylines(storylines) {
@@ -6171,6 +6440,26 @@ function preparedDrawClaimError(envelope) {
   return error;
 }
 
+function terminalPreparedDrawClaimError(error) {
+  return refreshablePreparedDrawClaimError(error) || discardPreparedDrawClaimError(error);
+}
+
+function refreshablePreparedDrawClaimError(error) {
+  return [
+    "DRAW_SESSION_STALE",
+    "DRAW_ENTRY_NOT_FOUND",
+    "DRAW_ENTRY_CLAIMED",
+  ].includes(String(error?.code || ""));
+}
+
+function discardPreparedDrawClaimError(error) {
+  return [
+    "DRAW_ENTRY_UNAVAILABLE",
+    "DRAW_OUTCOME_INVALID",
+    "DRAW_CLAIM_BATCH_SIZE_INVALID",
+  ].includes(String(error?.code || ""));
+}
+
 function preparedDrawResourceProjection(entry) {
   const outcome = isPlainObject(entry?.outcome) ? entry.outcome : {};
   const outcomeKind = String(outcome.outcome_kind || "");
@@ -6230,6 +6519,40 @@ function replayPendingPreparedDrawDebits(claims = pendingPreparedDrawClaims) {
     entry.client_revealed = true;
     applyPreparedDrawOptimisticDebit(entry);
   });
+}
+
+function resumePreparedDrawClaimsFromAuthoritativeState(options = {}) {
+  if (!cloudPlayerStateReady || drawClaimBatchInFlight) return false;
+  const sessionId = String(state.drawSession?.session_id || "");
+  const entries = new Map((state.drawSession?.entries || []).map((entry) => [String(entry.entry_id || ""), entry]));
+  const combined = [...activePreparedDrawClaims, ...pendingPreparedDrawClaims];
+  const seen = new Set();
+  const resumable = combined.filter((claim) => {
+    const key = `${claim?.sessionId || ""}:${claim?.entryId || ""}`;
+    const entry = entries.get(String(claim?.entryId || ""));
+    const valid = Boolean(sessionId && claim?.sessionId === sessionId && entry && !entry.claimed && !seen.has(key));
+    if (valid) seen.add(key);
+    return valid;
+  });
+  const resumableKeys = new Set(resumable.map((claim) => `${claim.sessionId}:${claim.entryId}`));
+  state.history.forEach((item) => {
+    if (!item.pendingSync || !item.drawSessionEntryId) return;
+    const key = `${item.drawSessionId || sessionId}:${item.drawSessionEntryId}`;
+    if (!resumableKeys.has(key)) {
+      item.pendingSync = false;
+      item.syncError = true;
+    }
+  });
+  activePreparedDrawClaims = [];
+  pendingPreparedDrawClaims = resumable;
+  activeDrawClaimRequestId = "";
+  drawClaimRetryCount = 0;
+  replayPendingPreparedDrawDebits(resumable);
+  persistPreparedDrawClaimQueue();
+  saveState();
+  if (options.render !== false) renderDrawSurfaces();
+  if (resumable.length) schedulePreparedDrawClaimFlush(0);
+  return resumable.length > 0;
 }
 
 function applyPreparedDrawClaimResults(data, claims) {
@@ -6324,6 +6647,18 @@ async function flushPreparedDrawClaims() {
       const historyItem = state.history.find((item) => item.drawSessionEntryId === claim.entryId);
       if (historyItem) historyItem.syncError = true;
     });
+    if (terminalPreparedDrawClaimError(error)) {
+      if (discardPreparedDrawClaimError(error)) {
+        activePreparedDrawClaims = [];
+        activeDrawClaimRequestId = "";
+        drawClaimRetryCount = 0;
+      }
+      state.manager.cloudStatus = `cloud-draw-claim-refresh:${error.code}`;
+      saveState();
+      persistPreparedDrawClaimQueue();
+      setTimeout(() => loadCloudState(), 0);
+      return false;
+    }
     saveState();
     persistPreparedDrawClaimQueue();
     schedulePreparedDrawClaimFlush(Math.min(8000, 500 * (2 ** Math.min(drawClaimRetryCount, 4))));
@@ -6890,11 +7225,19 @@ function renderShellMode() {
   const appShell = document.getElementById("appShell");
   const managerDashboard = document.getElementById("managerDashboard");
   const isLoginRequired = Boolean(PROFILE.loginRequired && !MANAGER_MODE);
+  const syncRequired = playerCloudSyncRequired();
+  const syncReady = cloudPlayerStateReady && (!syncRequired || petContentReady);
+  const contentFailed = syncRequired && !petContentReady && Boolean(petContentSyncError);
+  const syncPhase = cloudPlayerSyncPhase === "error" || contentFailed
+    ? "error"
+    : cloudPlayerStateReady && syncRequired && !petContentReady
+      ? "content-loading"
+      : cloudPlayerSyncPhase;
   const syncModel = cloudSyncGateModel({
-    required: playerCloudSyncRequired(),
-    ready: cloudPlayerStateReady,
-    phase: cloudPlayerSyncPhase,
-    error: cloudPlayerSyncError,
+    required: syncRequired,
+    ready: syncReady,
+    phase: syncPhase,
+    error: cloudPlayerSyncError || petContentSyncError,
   });
   const mode = isLoginRequired ? "login" : syncModel.visible ? "sync" : "app";
   if (loginScreen) loginScreen.hidden = mode !== "login";
@@ -9487,7 +9830,7 @@ document.getElementById("employeeLoginForm")?.addEventListener("submit", (event)
 });
 
 document.getElementById("playerSyncRetryBtn")?.addEventListener("click", () => {
-  loadCloudState();
+  retryPlayerBootstrap();
 });
 
 document.getElementById("playerSyncSwitchBtn")?.addEventListener("click", () => {
@@ -9514,14 +9857,6 @@ ensureStarterPet();
 ensureCollectionStoryline();
 restorePreparedDrawClaimQueue();
 render();
-loadExternalContent().then(async () => {
-  await loadCloudState();
-  const outstandingClaims = [...activePreparedDrawClaims, ...pendingPreparedDrawClaims];
-  if (outstandingClaims.length) {
-    replayPendingPreparedDrawDebits(outstandingClaims);
-    saveState();
-    renderDrawSurfaces();
-    schedulePreparedDrawClaimFlush(0);
-  }
-});
+loadExternalContent();
+loadCloudState();
 registerServiceWorker();
