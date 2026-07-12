@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v57";
+const APP_VERSION = "v58";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -775,6 +775,11 @@ function homeBagSummaryText() {
   return total > 0 ? `${total} 件` : "整理";
 }
 
+function renderHomeBagSummary() {
+  const target = document.getElementById("homeBagSummaryValue");
+  if (target) target.textContent = homeBagSummaryText();
+}
+
 function buildHomeFunctionDock() {
   const tickets = totalTickets();
   const pet = getActivePet();
@@ -795,7 +800,7 @@ function buildHomeFunctionDock() {
         ${items.map((item) => `
           <button class="home-function-button ${item.hot ? "is-hot" : ""}" type="button" data-view="${escapeHtml(item.view)}">
             <span>${escapeHtml(item.label)}</span>
-            <strong>${escapeHtml(item.value)}</strong>
+            <strong ${item.view === "bag" ? 'id="homeBagSummaryValue"' : ""}>${escapeHtml(item.value)}</strong>
           </button>
         `).join("")}
       </div>
@@ -1426,6 +1431,7 @@ function switchToView(view, options = {}) {
   if (!panel) return false;
   document.querySelectorAll(".view-panel").forEach((item) => item.classList.toggle("is-active", item.id === panelId));
   if (view === "collection") renderCollection();
+  if (view === "bag") renderInventoryBag();
   if (options.scroll !== false && typeof panel.scrollIntoView === "function") {
     panel.scrollIntoView({ block: "start", behavior: "smooth" });
   }
@@ -4143,6 +4149,15 @@ function eggCount(petId) {
   return rewardCount(state.eggs?.[petId] || 0);
 }
 
+function visibleEssenceCount(storylineId) {
+  const key = essenceKeyForStoryline(storylineId);
+  return essenceCount(storylineId) + pendingPreparedDrawResourceAmount("essences", key);
+}
+
+function visibleEggCount(petId) {
+  return eggCount(petId) + pendingPreparedDrawResourceAmount("eggs", petId);
+}
+
 function addEgg(petId, amount = 1) {
   state.eggs = isPlainObject(state.eggs) ? state.eggs : {};
   state.eggs[petId] = rewardCount(state.eggs[petId] || 0) + rewardCount(amount);
@@ -6079,6 +6094,8 @@ function renderDrawSurfaces() {
 function renderImmediateDrawSurfaces() {
   renderPools();
   renderDrawResult();
+  renderHomeBagSummary();
+  if (isViewActive("bag")) renderInventoryBag();
   const poolGrid = document.getElementById("poolGrid");
   if (drawRequest?.startedAt) lastDrawRevealLatencyMs = Math.max(0, Date.now() - drawRequest.startedAt);
   if (poolGrid?.dataset) poolGrid.dataset.lastRevealMs = String(lastDrawRevealLatencyMs);
@@ -6154,12 +6171,63 @@ function preparedDrawClaimError(envelope) {
   return error;
 }
 
+function preparedDrawResourceProjection(entry) {
+  const outcome = isPlainObject(entry?.outcome) ? entry.outcome : {};
+  const outcomeKind = String(outcome.outcome_kind || "");
+  const petId = String(outcome.pet_id || outcome.pet?.pet_id || "");
+  if (outcomeKind === "egg" && petId) {
+    return { bucket: "eggs", key: petId, amount: 1 };
+  }
+  if (outcomeKind !== "essence") return null;
+  const pet = getPet(petId) || outcome.pet || null;
+  const key = String(outcome.essence_key || essenceKeyForStoryline(pet?.storyline_id || ""));
+  if (!key) return null;
+  return { bucket: "essences", key, amount: Math.max(1, rewardCount(outcome.essence_amount || 1)) };
+}
+
+function optimisticPreparedDrawEntries() {
+  const sessionId = String(state.drawSession?.session_id || "");
+  if (!sessionId) return [];
+  const outstandingKeys = new Set(
+    [...activePreparedDrawClaims, ...pendingPreparedDrawClaims]
+      .filter((claim) => String(claim?.sessionId || "") === sessionId)
+      .map((claim) => `${sessionId}:${claim.entryId}`),
+  );
+  return (state.drawSession?.entries || []).filter((entry) => {
+    if (!entry || entry.claimed) return false;
+    const key = `${sessionId}:${entry.entry_id}`;
+    return Boolean(entry.client_revealed || outstandingKeys.has(key));
+  });
+}
+
+function pendingPreparedDrawResourceTotals() {
+  const totals = { eggs: {}, essences: {} };
+  optimisticPreparedDrawEntries().forEach((entry) => {
+    const projection = preparedDrawResourceProjection(entry);
+    if (!projection || !totals[projection.bucket]) return;
+    totals[projection.bucket][projection.key] = rewardCount(totals[projection.bucket][projection.key] || 0) + projection.amount;
+  });
+  return totals;
+}
+
+function pendingPreparedDrawResourceAmount(bucket, key) {
+  return rewardCount(pendingPreparedDrawResourceTotals()?.[bucket]?.[key] || 0);
+}
+
+function visiblePreparedResourceMap(bucket, base = {}) {
+  const visible = Object.fromEntries(Object.entries(isPlainObject(base) ? base : {}).map(([key, value]) => [key, rewardCount(value)]));
+  const pending = pendingPreparedDrawResourceTotals()?.[bucket] || {};
+  Object.entries(pending).forEach(([key, amount]) => {
+    visible[key] = rewardCount(visible[key] || 0) + rewardCount(amount);
+  });
+  return visible;
+}
+
 function replayPendingPreparedDrawDebits(claims = pendingPreparedDrawClaims) {
   const pendingKeys = new Set(claims.map((claim) => `${claim.sessionId}:${claim.entryId}`));
   (state.drawSession?.entries || []).forEach((entry) => {
     if (!pendingKeys.has(`${state.drawSession?.session_id}:${entry.entry_id}`) || entry.claimed) return;
     entry.client_revealed = true;
-    delete entry.optimistic_debit;
     applyPreparedDrawOptimisticDebit(entry);
   });
 }
@@ -6995,6 +7063,7 @@ function renderEntrySummon() {
     ${buildHomeMetricsStrip(sourceMetrics)}
     ${buildHomeHelpDrawer(sourceMetrics)}
   `;
+  renderHomeBagSummary();
 }
 
 function progressPercent(current, target) {
@@ -7509,6 +7578,7 @@ function drawOutcomeLabel(draw, pet) {
   if (draw?.outcomeKind === "essence") return `${essenceLabelForResource(draw?.essenceKey || draw?.resourceKey, pet)} ×${rewardCount(draw.essenceAmount || draw.resourceAmount || 0)}`;
   if (draw?.outcomeKind === "essence_conversion") return `${essenceLabelForResource(draw?.essenceKey || draw?.resourceKey, pet)} ×${rewardCount(draw.essenceAmount || 5)}`;
   if (draw?.outcomeKind === "temple_blessing") return "神殿祝福 +1";
+  if (draw?.pendingSync && draw?.outcomeKind === "pet") return "完整寵物卡已現身";
   if (draw?.duplicate) return `${pet?.name || "寵物"}星魂 +${rewardCount(draw.fragmentsAdded)}`;
   if (pet?.rarity === "SSR" || pet?.rarity === "UR") return "稀有夥伴加入";
   return "新夥伴加入";
@@ -7516,8 +7586,8 @@ function drawOutcomeLabel(draw, pet) {
 
 function drawResultSummaryText(draw, pet) {
   if (draw?.outcomeKind === "egg") {
-    const currentEgg = eggCount(draw.eggPetId || pet?.pet_id);
-    const essence = essenceCount(pet?.storyline_id);
+    const currentEgg = visibleEggCount(draw.eggPetId || pet?.pet_id);
+    const essence = visibleEssenceCount(pet?.storyline_id);
     return `${eggLabel(pet)}已入袋，目前蛋 ${currentEgg} 顆、${essenceLabelForStoryline(pet?.storyline_id)} ${essence}/${HATCH_ESSENCE_COST}。`;
   }
   if (draw?.outcomeKind === "essence") {
@@ -7529,25 +7599,33 @@ function drawResultSummaryText(draw, pet) {
   if (draw?.outcomeKind === "temple_blessing") {
     return "成交神殿滿星重複已化成神殿祝福，未來可指定換蛋或精華。";
   }
+  if (draw?.pendingSync && draw?.outcomeKind === "pet") return "完整寵物卡已現身，正在確認會加入新夥伴或轉成同名星魂。";
   if (draw?.duplicate) return `${pet?.name || "寵物"}星魂 +${rewardCount(draw.fragmentsAdded)}，升星更近。`;
   return "新夥伴加入卡片庫。";
 }
 
 function hatchProgressForDraw(draw, pet) {
   if (!pet || !["egg", "essence"].includes(draw?.outcomeKind)) return null;
-  const essence = essenceCount(pet.storyline_id);
+  const essence = visibleEssenceCount(pet.storyline_id);
+  const pendingEssence = pendingPreparedDrawResourceAmount("essences", essenceKeyForStoryline(pet.storyline_id));
+  const pendingEggs = PETS
+    .filter((item) => item.storyline_id === pet.storyline_id)
+    .reduce((sum, item) => sum + pendingPreparedDrawResourceAmount("eggs", item.pet_id), 0);
+  const pendingResources = pendingEssence + pendingEggs > 0;
   const progress = Math.min(HATCH_ESSENCE_COST, essence);
   const gap = Math.max(0, HATCH_ESSENCE_COST - essence);
   const storylineEggs = PETS
-    .filter((item) => item.storyline_id === pet.storyline_id && eggCount(item.pet_id) > 0 && !getOwned(item.pet_id))
-    .map((item) => ({ pet: item, eggs: eggCount(item.pet_id) }));
+    .filter((item) => item.storyline_id === pet.storyline_id && visibleEggCount(item.pet_id) > 0 && !getOwned(item.pet_id))
+    .map((item) => ({ pet: item, eggs: visibleEggCount(item.pet_id) }));
   const target = storylineEggs[0]?.pet || pet;
   const hasEgg = storylineEggs.length > 0 || draw.outcomeKind === "egg";
   const title = hasEgg
     ? `${eggLabel(target)}孵化進度`
     : `${fallbackStorylineName(pet.storyline_id)}孵化能量`;
   const detail = gap <= 0 && hasEgg
-    ? `${essenceLabelForStoryline(pet.storyline_id)}已足，現在可孵化。`
+    ? pendingResources
+      ? `${essenceLabelForStoryline(pet.storyline_id)}已達門檻，雲端保存完成後可孵化。`
+      : `${essenceLabelForStoryline(pet.storyline_id)}已足，現在可孵化。`
     : hasEgg
       ? `已有蛋，還差 ${gap} 個${essenceLabelForStoryline(pet.storyline_id)}可孵化。`
       : `先累積 ${essenceLabelForStoryline(pet.storyline_id)} ${progress}/${HATCH_ESSENCE_COST}，抽到同線寵物蛋就能孵化。`;
@@ -7578,15 +7656,20 @@ function drawHatchProgressMarkup(draw, pet) {
 function drawFragmentProgressText(draw, pet, owned) {
   if (!pet) return "";
   if (draw?.outcomeKind === "egg") {
-    const essence = essenceCount(pet.storyline_id);
+    const essence = visibleEssenceCount(pet.storyline_id);
     const gap = Math.max(0, HATCH_ESSENCE_COST - essence);
+    const pendingResources = pendingPreparedDrawResourceAmount("essences", essenceKeyForStoryline(pet.storyline_id))
+      + pendingPreparedDrawResourceAmount("eggs", pet.pet_id) > 0;
     return gap <= 0
-      ? `${eggLabel(pet)}可以孵化了，到卡片庫把牠叫出來。`
+      ? pendingResources
+        ? `${eggLabel(pet)}已達孵化門檻，雲端保存完成後即可孵化。`
+        : `${eggLabel(pet)}可以孵化了，到卡片庫把牠叫出來。`
       : `還差 ${gap} 個${essenceLabelForStoryline(pet.storyline_id)}可孵化 ${pet.name}。`;
   }
   if (draw?.outcomeKind === "essence") {
-    return `目前${essenceLabelForStoryline(pet.storyline_id)} ${essenceCount(pet.storyline_id)}/${HATCH_ESSENCE_COST}，搭配同線寵物蛋可孵化。`;
+    return `目前${essenceLabelForStoryline(pet.storyline_id)} ${visibleEssenceCount(pet.storyline_id)}/${HATCH_ESSENCE_COST}，搭配同線寵物蛋可孵化。`;
   }
+  if (draw?.pendingSync && draw?.outcomeKind === "pet") return "雲端確認後，完整卡會加入卡片庫或轉成同名星魂。";
   if (!owned) return "";
   if (draw?.outcomeKind === "essence_conversion") return `${pet.name} 的舊版兌換紀錄已保留；新版重複卡會先存成星魂。`;
   if (draw?.outcomeKind === "temple_blessing") return "舊版神殿祝福紀錄已保留；新版改由背包手動兌換。";
@@ -7618,6 +7701,7 @@ function drawMomentumCue(action, pet, owned) {
 function drawMonthlyPacingText(draw) {
   const cue = drawPacingCue(draw?.poolKey);
   const goal = INTERNAL_DRAW_PACING_CONFIG.monthlyGoal;
+  if (draw?.pendingSync && draw?.outcomeKind === "pet") return "月養成節奏：完整卡已現身，正在確認是新夥伴或同名星魂。";
   if (draw?.outcomeKind === "pet" && !draw?.duplicate) return `月養成節奏：這次是大成果；接下來用蛋、精華與星魂把主寵養起來。`;
   if (draw?.outcomeKind === "egg") return `月養成節奏：寵物蛋是中獎節點；補同線精華就能孵化。`;
   if (draw?.outcomeKind === "essence") return `月養成節奏：這次是小進度；${cue}`;
@@ -7629,7 +7713,8 @@ function todayDrawBattleText(draw = state.history.find((item) => item.type === "
   const today = todayKey();
   const draws = (state.history || []).filter((item) => item.type === "draw" && todayKey(new Date(item.at || Date.now())) === today);
   if (!draws.length) return "";
-  const newCount = draws.filter((item) => item.outcomeKind === "pet" && !item.duplicate).length;
+  const newCount = draws.filter((item) => item.outcomeKind === "pet" && !item.duplicate && !item.pendingSync).length;
+  const pendingPetCount = draws.filter((item) => item.outcomeKind === "pet" && item.pendingSync).length;
   const eggCountToday = draws.filter((item) => item.outcomeKind === "egg").length;
   const duplicateCount = draws.filter((item) => item.outcomeKind === "star_soul").length;
   const fragments = draws.reduce((sum, item) => sum + rewardCount(item.fragmentsAdded || 0), 0);
@@ -7642,8 +7727,10 @@ function todayDrawBattleText(draw = state.history.find((item) => item.type === "
     ? `${pet.name} 距離升 ${owned.star + 1} 星還差 ${gap} 個星魂`
     : pet && owned
       ? `${pet.name} 已達 5 星，重複星魂會保留在背包`
-      : "卡片庫已更新";
-  return `今天抽卡戰果：新寵 ${newCount}、蛋 ${eggCountToday}、星魂 +${fragments}、精華 +${essences}；${progress}。`;
+      : pendingPetCount > 0
+        ? "完整寵物卡正在雲端確認"
+        : "卡片庫已更新";
+  return `今天抽卡戰果：新寵 ${newCount}${pendingPetCount ? `、完整卡待確認 ${pendingPetCount}` : ""}、蛋 ${eggCountToday}、星魂 +${fragments}、精華 +${essences}；${progress}。`;
 }
 
 function drawWorkFollowupText() {
@@ -7749,6 +7836,8 @@ function buildDrawShareText(draw = state.history.find((item) => item.type === "d
       ? `拿到 ${draw.essenceLabel || essenceLabelForStoryline(pet?.storyline_id)} ×${rewardCount(draw.essenceAmount || 0)}。`
       : draw.outcomeKind === "temple_blessing"
         ? "成交神殿祝福已入袋。"
+        : draw.pendingSync && draw.outcomeKind === "pet"
+          ? "完整寵物卡已現身，正在確認是新夥伴或同名星魂。"
         : draw.duplicate
     ? `重複寵物轉成 ${rewardCount(draw.fragmentsAdded)} 星魂，下一次升星又近一點。`
     : pet?.rarity === "SSR"
@@ -7940,14 +8029,14 @@ function collectionFragmentTotal() {
 }
 
 function eggEntries() {
-  return Object.entries(state.eggs || {})
+  return Object.entries(visiblePreparedResourceMap("eggs", state.eggs))
     .map(([petId, amount]) => ({ pet: getPet(petId), amount: rewardCount(amount) }))
     .filter((item) => item.pet && item.amount > 0);
 }
 
 function essenceEntries() {
   const storylines = getStorylines();
-  return Object.entries(state.essences || {})
+  return Object.entries(visiblePreparedResourceMap("essences", state.essences))
     .map(([key, amount]) => {
       const resourceKey = key.replace(/_essence$/, "");
       const storyline = storylines.find((item) => storylineResourceKey(item.storyline_id) === resourceKey);
