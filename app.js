@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v62";
+const APP_VERSION = "v63";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -37,7 +37,7 @@ const PLAYER_SYNC_RETRY_DELAY_MS = 650;
 const PLAYER_SYNC_MAX_ATTEMPTS = 2;
 const PET_CONTENT_CACHE_TIMEOUT_MS = 1000;
 const PET_CONTENT_TIMEOUT_MS = 6000;
-const PET_CONTENT_MANIFEST_URL = "./pet_content_manifest.json?v=20260713-progressive-login-v62";
+const PET_CONTENT_MANIFEST_URL = "./pet_content_manifest.json?v=20260713-trusted-progressive-login-v63";
 let pendingPreparedDrawClaims = [];
 let activePreparedDrawClaims = [];
 let drawClaimBatchTimer = null;
@@ -7310,6 +7310,8 @@ function renderShellMode() {
     syncNotice.hidden = !progressiveShell;
     syncNotice.textContent = progressiveShell ? "正在更新本月資料，抽卡與養成會在確認後開放。" : "";
   }
+  const syncSkeleton = document.getElementById("cloudSyncSkeleton");
+  if (syncSkeleton) syncSkeleton.hidden = !progressiveShell;
   playerSyncScreen?.classList?.toggle("is-error", syncModel.failed);
   document.body?.classList?.toggle("is-manager-mode", MANAGER_MODE);
   document.body?.classList?.toggle("is-employee-login-required", isLoginRequired);

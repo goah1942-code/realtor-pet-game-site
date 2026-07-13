@@ -188,15 +188,53 @@ button {
   line-height: 1.45;
 }
 
+.cloud-sync-skeleton {
+  display: grid;
+  gap: 18px;
+  padding: 32px 18px;
+}
+
+.cloud-sync-skeleton h2 {
+  margin: 4px 0 8px;
+  font-size: 22px;
+  line-height: 1.35;
+}
+
+.cloud-sync-skeleton p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.cloud-sync-lines {
+  display: grid;
+  gap: 10px;
+}
+
+.cloud-sync-lines span {
+  display: block;
+  height: 12px;
+  border-radius: 8px;
+  background: #e8eef2;
+  animation: cloud-sync-pulse 1.1s ease-in-out infinite alternate;
+}
+
+.cloud-sync-lines span:nth-child(2) { width: 82%; animation-delay: 0.14s; }
+.cloud-sync-lines span:nth-child(3) { width: 64%; animation-delay: 0.28s; }
+
 .is-cloud-syncing .hero-band,
 .is-cloud-syncing .tabbar,
 .is-cloud-syncing .view-panel {
-  animation: cloud-sync-ready 180ms ease-out;
+  display: none;
 }
 
-@keyframes cloud-sync-ready {
-  from { opacity: 0.72; }
-  to { opacity: 1; }
+.is-cloud-syncing #backupStatus {
+  display: none;
+}
+
+@keyframes cloud-sync-pulse {
+  from { opacity: 0.52; }
+  to { opacity: 0.94; }
 }
 
 body:not(.is-manager-mode) #maintenanceMenu {

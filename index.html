@@ -24,7 +24,7 @@
     <link rel="icon" href="./assets/app-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./assets/app-icon-512.png" />
     <link rel="manifest" href="./site.webmanifest" />
-    <link rel="stylesheet" href="./styles.css?v=20260713-progressive-login-v62" />
+    <link rel="stylesheet" href="./styles.css?v=20260713-trusted-progressive-login-v63" />
   </head>
   <body>
     <section id="loginScreen" class="login-screen" hidden>
@@ -76,6 +76,14 @@
         </div>
       </header>
       <p id="cloudSyncNotice" class="cloud-sync-notice" aria-live="polite" hidden></p>
+      <section id="cloudSyncSkeleton" class="cloud-sync-skeleton" aria-live="polite" hidden>
+        <div>
+          <p class="eyebrow">房仲精靈</p>
+          <h2>正在整理這個月的冒險紀錄</h2>
+          <p>資料確認後會自動開啟行程與卡牌。</p>
+        </div>
+        <div class="cloud-sync-lines" aria-hidden="true"><span></span><span></span><span></span></div>
+      </section>
       <p id="backupStatus" class="backup-status" aria-live="polite"></p>
 
       <section class="hero-band">
@@ -302,6 +310,6 @@
       </section>
     </div>
 
-    <script src="./app.js?v=20260713-progressive-login-v62"></script>
+    <script src="./app.js?v=20260713-trusted-progressive-login-v63"></script>
   </body>
 </html>
