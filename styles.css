@@ -224,7 +224,8 @@ button {
 
 .is-cloud-syncing .hero-band,
 .is-cloud-syncing .tabbar,
-.is-cloud-syncing .view-panel {
+.is-cloud-syncing .view-panel,
+.is-cloud-syncing .view-panel.is-active {
   display: none;
 }
 

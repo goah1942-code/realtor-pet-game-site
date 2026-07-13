@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v63";
+const APP_VERSION = "v64";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -37,7 +37,7 @@ const PLAYER_SYNC_RETRY_DELAY_MS = 650;
 const PLAYER_SYNC_MAX_ATTEMPTS = 2;
 const PET_CONTENT_CACHE_TIMEOUT_MS = 1000;
 const PET_CONTENT_TIMEOUT_MS = 6000;
-const PET_CONTENT_MANIFEST_URL = "./pet_content_manifest.json?v=20260713-trusted-progressive-login-v63";
+const PET_CONTENT_MANIFEST_URL = "./pet_content_manifest.json?v=20260713-trusted-progressive-login-v64";
 let pendingPreparedDrawClaims = [];
 let activePreparedDrawClaims = [];
 let drawClaimBatchTimer = null;
