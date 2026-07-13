@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v61";
+const APP_VERSION = "v62";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -37,7 +37,7 @@ const PLAYER_SYNC_RETRY_DELAY_MS = 650;
 const PLAYER_SYNC_MAX_ATTEMPTS = 2;
 const PET_CONTENT_CACHE_TIMEOUT_MS = 1000;
 const PET_CONTENT_TIMEOUT_MS = 6000;
-const PET_CONTENT_MANIFEST_URL = "./pet_content_manifest.json?v=20260713-fast-login-v61";
+const PET_CONTENT_MANIFEST_URL = "./pet_content_manifest.json?v=20260713-progressive-login-v62";
 let pendingPreparedDrawClaims = [];
 let activePreparedDrawClaims = [];
 let drawClaimBatchTimer = null;
@@ -3316,6 +3316,10 @@ async function postCloudEnvelope(action, payload = {}) {
 
 function playerCloudSyncRequired() {
   return Boolean(CLOUD_API_BASE_URL && !MANAGER_MODE && !PROFILE.loginRequired);
+}
+
+function playerCloudSyncPending() {
+  return playerCloudSyncRequired() && !cloudPlayerStateReady;
 }
 
 function cloudSyncGateModel(options = {}) {
@@ -7285,7 +7289,10 @@ function renderShellMode() {
     phase: syncPhase,
     error: cloudPlayerSyncError || petContentSyncError,
   });
-  const mode = isLoginRequired ? "login" : syncModel.visible ? "sync" : "app";
+  // The catalog is static and safe to render before the player snapshot returns.
+  // Cloud-mutating actions remain locked until that authoritative snapshot arrives.
+  const progressiveShell = syncRequired && petContentReady && cloudPlayerSyncPhase === "loading" && !syncModel.failed;
+  const mode = isLoginRequired ? "login" : syncModel.visible && !progressiveShell ? "sync" : "app";
   if (loginScreen) loginScreen.hidden = mode !== "login";
   if (playerSyncScreen) playerSyncScreen.hidden = mode !== "sync";
   if (appShell) appShell.hidden = mode !== "app";
@@ -7298,9 +7305,15 @@ function renderShellMode() {
   if (syncMessage) syncMessage.textContent = syncModel.detail ? `${syncModel.message}（${syncModel.detail}）` : syncModel.message;
   if (syncRetry) syncRetry.hidden = !syncModel.retryVisible;
   if (syncSwitch) syncSwitch.hidden = !syncModel.switchVisible;
+  const syncNotice = document.getElementById("cloudSyncNotice");
+  if (syncNotice) {
+    syncNotice.hidden = !progressiveShell;
+    syncNotice.textContent = progressiveShell ? "正在更新本月資料，抽卡與養成會在確認後開放。" : "";
+  }
   playerSyncScreen?.classList?.toggle("is-error", syncModel.failed);
   document.body?.classList?.toggle("is-manager-mode", MANAGER_MODE);
   document.body?.classList?.toggle("is-employee-login-required", isLoginRequired);
+  document.body?.classList?.toggle("is-cloud-syncing", progressiveShell);
   const maintenanceMenu = document.getElementById("maintenanceMenu");
   if (maintenanceMenu) maintenanceMenu.hidden = !MANAGER_MODE;
   ["backupBtn", "restoreBtn"].forEach((id) => {
@@ -7356,7 +7369,9 @@ function renderDailyStatus() {
 function renderProfile() {
   const branchLabel = document.getElementById("branchLabel");
   const hasCloudStatus = state.manager.cloudStatus && state.manager.cloudStatus !== "local";
-  const cloudLabel = CLOUD_API_BASE_URL || hasCloudStatus
+  const cloudLabel = playerCloudSyncPending()
+    ? " · 資料更新中"
+    : CLOUD_API_BASE_URL || hasCloudStatus
     ? state.manager.cloudStatus?.startsWith("cloud-error")
       ? " · 雲端連線異常"
       : CLOUD_API_BASE_URL === "mock" || state.manager.cloudStatus?.startsWith("mock")
@@ -9752,6 +9767,9 @@ function petSvg(pet, owned, size) {
 document.addEventListener("click", (event) => {
   const target = event.target.closest("button");
   if (!target) return;
+  const mutatesPlayerState = ["draw", "drawTen", "active", "star", "hatch", "soulEssence", "soulBlessing", "awaken", "ultimate"]
+    .some((key) => Object.prototype.hasOwnProperty.call(target.dataset, key));
+  if (playerCloudSyncPending() && mutatesPlayerState) return;
   if (target.dataset.closeDrawReveal) {
     closeDrawRevealOverlay();
     return;
