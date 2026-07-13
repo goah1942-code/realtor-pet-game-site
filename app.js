@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v60";
+const APP_VERSION = "v61";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -37,7 +37,7 @@ const PLAYER_SYNC_RETRY_DELAY_MS = 650;
 const PLAYER_SYNC_MAX_ATTEMPTS = 2;
 const PET_CONTENT_CACHE_TIMEOUT_MS = 1000;
 const PET_CONTENT_TIMEOUT_MS = 6000;
-const PET_CONTENT_MANIFEST_URL = "./pet_content_manifest.json?v=20260712-ready-pools-first-v60";
+const PET_CONTENT_MANIFEST_URL = "./pet_content_manifest.json?v=20260713-fast-login-v61";
 let pendingPreparedDrawClaims = [];
 let activePreparedDrawClaims = [];
 let drawClaimBatchTimer = null;
@@ -51,6 +51,7 @@ let cloudPlayerSyncError = "";
 let cloudPlayerSyncGeneration = 0;
 let cloudPlayerSyncInFlight = null;
 let cloudPlayerSyncAbortController = null;
+let cloudDrawSessionPrimeInFlight = null;
 let petContentReady = false;
 let petContentSyncError = "";
 let petContentLoadInFlight = null;
@@ -3350,16 +3351,22 @@ function cloudSyncGateModel(options = {}) {
   };
 }
 
-function validCloudPlayerStateData(data) {
+function validCloudDrawSessionData(data) {
   const drawSession = isPlainObject(data?.draw_session) ? data.draw_session : data?.resources?.draw_session;
+  return Boolean(
+    isPlainObject(drawSession) &&
+    String(drawSession.session_id || "") &&
+    Array.isArray(drawSession.entries)
+  );
+}
+
+function validCloudPlayerStateData(data, options = {}) {
   return Boolean(
     isPlainObject(data) &&
     isPlainObject(data.resources) &&
     isPlainObject(data.collection) &&
     Array.isArray(data.collection.owned) &&
-    isPlainObject(drawSession) &&
-    String(drawSession.session_id || "") &&
-    Array.isArray(drawSession.entries)
+    (options.allowDeferredDrawSession || validCloudDrawSessionData(data))
   );
 }
 
@@ -3466,7 +3473,9 @@ async function fetchCloudPlayerStateAttempt(params, generation, attemptIndex) {
     );
     if (!currentCloudPlayerSync(generation)) throw cloudRequestError("CLOUD_SYNC_STALE", "舊的同步回應已忽略");
     const data = cloudEnvelopeDataOrThrow(envelope, "playerState", requestId);
-    if (!validCloudPlayerStateData(data)) throw cloudRequestError("PLAYER_STATE_INVALID", "playerState 資料格式不完整");
+    if (!validCloudPlayerStateData(data, { allowDeferredDrawSession: params.defer_draw_session === 1 })) {
+      throw cloudRequestError("PLAYER_STATE_INVALID", "playerState 資料格式不完整");
+    }
     if (!validCloudPlayerStateIdentity(data, params.uid, params.period)) {
       throw cloudRequestError("PLAYER_STATE_IDENTITY_MISMATCH", "playerState 員編或月份不一致");
     }
@@ -3484,7 +3493,7 @@ async function waitForCloudPlayerSyncRetry(generation) {
 async function runCloudPlayerStateSync(generation) {
   const uid = cleanEmployeeId(PROFILE.employeeId || PROFILE.userKey);
   const period = currentPeriodKey();
-  const params = { uid, period, draw_session_id: ensureStoredDrawSessionId() };
+  const params = { uid, period, draw_session_id: ensureStoredDrawSessionId(), defer_draw_session: 1 };
   let lastError = cloudRequestError("CLOUD_PLAYER_STATE_FAILED", "雲端連線失敗");
 
   for (let attemptIndex = 0; attemptIndex < PLAYER_SYNC_MAX_ATTEMPTS; attemptIndex += 1) {
@@ -3499,8 +3508,10 @@ async function runCloudPlayerStateSync(generation) {
       cloudPlayerSyncPhase = "ready";
       cloudPlayerSyncError = "";
       const applied = applyCloudPlayerState(data, { render: false });
-      if (applied) resumePreparedDrawClaimsFromAuthoritativeState({ render: false });
+      const drawSessionReady = validCloudDrawSessionData(data);
+      if (applied && drawSessionReady) resumePreparedDrawClaimsFromAuthoritativeState({ render: false });
       render();
+      if (applied && !drawSessionReady) setTimeout(() => primeCloudDrawSession(), 0);
       return applied;
     } catch (error) {
       if (!currentCloudPlayerSync(generation)) return false;
@@ -3522,6 +3533,40 @@ async function runCloudPlayerStateSync(generation) {
   saveState();
   render();
   return false;
+}
+
+async function primeCloudDrawSession() {
+  if (!CLOUD_API_BASE_URL || CLOUD_API_BASE_URL === "mock" || MANAGER_MODE || PROFILE.loginRequired) return false;
+  if (validCloudDrawSessionData({ draw_session: state.drawSession })) return true;
+  if (cloudDrawSessionPrimeInFlight) return cloudDrawSessionPrimeInFlight;
+  const generation = cloudPlayerSyncGeneration;
+  const params = {
+    uid: cleanEmployeeId(PROFILE.employeeId || PROFILE.userKey),
+    period: currentPeriodKey(),
+    draw_session_id: ensureStoredDrawSessionId(),
+  };
+  const promise = fetchCloudPlayerStateAttempt(params, generation, 0)
+    .then((data) => {
+      if (!currentCloudPlayerSync(generation)) return false;
+      const applied = applyCloudPlayerState(data, { render: false });
+      if (applied) resumePreparedDrawClaimsFromAuthoritativeState({ render: false });
+      render();
+      return applied;
+    })
+    .catch((error) => {
+      if (currentCloudPlayerSync(generation)) {
+        const normalized = normalizeCloudPlayerSyncError(error);
+        state.manager.cloudStatus = `cloud-draw-session-error:${normalized.code}`;
+        saveState();
+        renderDrawSurfaces();
+      }
+      return false;
+    })
+    .finally(() => {
+      if (cloudDrawSessionPrimeInFlight === promise) cloudDrawSessionPrimeInFlight = null;
+    });
+  cloudDrawSessionPrimeInFlight = promise;
+  return promise;
 }
 
 function loadCloudPlayerState() {
@@ -4553,6 +4598,7 @@ function retryPlayerBootstrap() {
   const pending = [];
   if (!petContentReady) pending.push(loadExternalContent());
   if (!cloudPlayerStateReady) pending.push(loadCloudState());
+  else if (!validCloudDrawSessionData({ draw_session: state.drawSession })) pending.push(primeCloudDrawSession());
   return Promise.all(pending);
 }
 
