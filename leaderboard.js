@@ -115,7 +115,7 @@ async function loadCollectionLeaderboard() {
   renderCollectionLeaderboard();
   const controller = new AbortController();
   ui.controller = controller;
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), 20000);
   try {
     const url = new URL(CLOUD_API_BASE_URL);
     url.search = "";
