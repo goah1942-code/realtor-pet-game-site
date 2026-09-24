@@ -24,7 +24,7 @@
     <link rel="icon" href="./assets/app-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./assets/app-icon-512.png" />
     <link rel="manifest" href="./site.webmanifest" />
-    <link rel="stylesheet" href="./styles.css?v=20260713-trusted-progressive-login-v64" />
+    <link rel="stylesheet" href="./styles.css?v=20260924-leaderboard-v68" />
   </head>
   <body>
     <section id="loginScreen" class="login-screen" hidden>
@@ -85,6 +85,7 @@
         <div class="cloud-sync-lines" aria-hidden="true"><span></span><span></span><span></span></div>
       </section>
       <p id="backupStatus" class="backup-status" aria-live="polite"></p>
+      <div id="petActionStatus" class="pet-action-status" role="status" aria-live="polite" hidden></div>
 
       <section class="hero-band">
         <div class="pet-stage" id="activePetStage"></div>
@@ -129,7 +130,10 @@
       <section id="view-collection" class="view-panel">
         <div class="section-heading">
           <h2>卡片庫</h2>
-          <span id="collectionSummary" class="soft-pill"></span>
+          <div class="collection-heading-actions">
+            <span id="collectionSummary" class="soft-pill"></span>
+            <button id="collectionLeaderboardOpen" class="secondary-button" type="button" aria-haspopup="dialog">排行榜</button>
+          </div>
         </div>
 
         <div class="storyline-filter" id="storylineFilter" aria-label="故事線篩選"></div>
@@ -159,7 +163,7 @@
       <section id="managerDashboard" class="manager-dashboard" hidden>
         <div class="section-heading">
           <h2>店長儀表板</h2>
-          <span class="soft-pill">不顯示公開個人排名</span>
+          <span class="soft-pill">工作數據僅店長可見</span>
         </div>
 
         <section class="manager-data-workflow" aria-label="店長數據區">
@@ -205,7 +209,7 @@
               <strong>團隊任務</strong>
               <button id="teamMissionToggle" class="secondary-button" type="button">未開始</button>
             </div>
-            <p class="small-text">第一版只顯示狀態，不做公開個人排名。</p>
+            <p class="small-text">團隊任務狀態。</p>
           </article>
           <article class="manager-card">
             <div class="team-topline">
@@ -245,9 +249,9 @@
               <span class="summon-kicker">店長測試帳號</span>
               <strong>手動調整本月累積數據</strong>
             </div>
-            <a id="managerTestPlayerLink" class="secondary-button" href="./?branch=樹林店&amp;agent=游榮哲&amp;uid=293127" target="_blank" rel="noopener">開啟測試帳號</a>
+            <a id="managerTestPlayerLink" class="secondary-button" hidden target="_blank" rel="noopener">開啟測試帳號</a>
           </div>
-          <p class="small-text">套用後以員編 293127 開啟同仁畫面，查看數據如何產生點數、卡池與養成進度。店長不列入同仁排名。</p>
+          <p class="small-text">套用後可開啟店長測試帳號。店長不列入同仁排名。</p>
           <form id="managerTestMetricsForm" class="manual-report manager-manual-report" autocomplete="off">
             <label>
               <span>資料月份</span>
@@ -310,6 +314,20 @@
       </section>
     </div>
 
-    <script src="./app.js?v=20260713-trusted-progressive-login-v64"></script>
+    <dialog id="collectionLeaderboardDialog" class="collection-leaderboard-dialog" aria-labelledby="collectionLeaderboardTitle">
+      <header class="collection-leaderboard-header">
+        <div><h2 id="collectionLeaderboardTitle">收藏排行榜</h2><p>全店累積 · 目前持有</p></div>
+        <button id="collectionLeaderboardClose" class="collection-leaderboard-icon" type="button" aria-label="關閉排行榜" title="關閉排行榜">&#215;</button>
+      </header>
+      <div class="collection-leaderboard-tabs" role="tablist" aria-label="排行榜種類">
+        <button id="leaderboardTabOwned" type="button" role="tab" aria-selected="true" aria-controls="collectionLeaderboardPanel" data-leaderboard-metric="owned_kinds">寵物種類</button>
+        <button id="leaderboardTabFive" type="button" role="tab" aria-selected="false" aria-controls="collectionLeaderboardPanel" tabindex="-1" data-leaderboard-metric="five_star_kinds">五星種類</button>
+      </div>
+      <section id="collectionLeaderboardPanel" class="collection-leaderboard-panel" role="tabpanel" aria-labelledby="leaderboardTabOwned" tabindex="0"></section>
+      <footer class="collection-leaderboard-footer"><span id="collectionLeaderboardTime"></span><button id="collectionLeaderboardRefresh" class="collection-leaderboard-icon" type="button" aria-label="重新載入排行榜" title="重新載入排行榜">&#8635;</button></footer>
+      <p class="collection-leaderboard-note">收藏排行不代表工作表現。</p>
+    </dialog>
+    <script src="./app.js?v=20260924-leaderboard-v68"></script>
+    <script src="./leaderboard.js?v=20260924-leaderboard-v68"></script>
   </body>
 </html>

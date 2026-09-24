@@ -7,6 +7,7 @@
 - index.html
 - styles.css
 - app.js
+- leaderboard.js
 - sw.js
 - pet_content_manifest.json
 - site.webmanifest

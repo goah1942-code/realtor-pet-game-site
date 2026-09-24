@@ -1,5 +1,5 @@
 const LEGACY_STORAGE_KEY = "realtor-pet-game-v2";
-const APP_VERSION = "v64";
+const APP_VERSION = "v68";
 const EMPLOYEE_LOGIN_KEY = `${LEGACY_STORAGE_KEY}:employee-login`;
 const CLOUD_MANAGER_KEY_STORAGE = `${LEGACY_STORAGE_KEY}:manager-key`;
 const MANAGER_MODE = readManagerMode();
@@ -37,7 +37,7 @@ const PLAYER_SYNC_RETRY_DELAY_MS = 650;
 const PLAYER_SYNC_MAX_ATTEMPTS = 2;
 const PET_CONTENT_CACHE_TIMEOUT_MS = 1000;
 const PET_CONTENT_TIMEOUT_MS = 6000;
-const PET_CONTENT_MANIFEST_URL = "./pet_content_manifest.json?v=20260713-trusted-progressive-login-v64";
+const PET_CONTENT_MANIFEST_URL = "./pet_content_manifest.json?v=20260924-leaderboard-v68";
 let pendingPreparedDrawClaims = [];
 let activePreparedDrawClaims = [];
 let drawClaimBatchTimer = null;
@@ -52,6 +52,8 @@ let cloudPlayerSyncGeneration = 0;
 let cloudPlayerSyncInFlight = null;
 let cloudPlayerSyncAbortController = null;
 let cloudDrawSessionPrimeInFlight = null;
+let cloudPetActionState = { phase: "idle", message: "" };
+let cloudPetActionAttempt = null;
 let petContentReady = false;
 let petContentSyncError = "";
 let petContentLoadInFlight = null;
@@ -611,11 +613,11 @@ const HOME_METRIC_ITEMS = [
 ];
 
 const HOME_TICKET_NUDGES = {
-  general: "電話量再累積一點，免費抽會增加",
-  visit: "有效拜訪、其他拜訪與社區服務都能推進",
-  showing: "帶看再 +1 組，就多 1 次帶看池抽卡",
-  result: "委託或斡旋成果再 +1 件，就多 1 次成果池抽卡",
-  contract: "見面談與成交會分別累積成交池抽數",
+  general: "每日免費額度與已入帳電話獎勵",
+  visit: "已入帳的拜訪與社區服務獎勵",
+  showing: "已入帳的帶看獎勵",
+  result: "已入帳的成果獎勵",
+  contract: "已入帳的見面談與成交獎勵",
 };
 
 const HOME_HERO_ACTIVITY_ITEMS = [
@@ -682,8 +684,7 @@ function nextFoodMissing(value) {
 }
 
 function foodHintText(item, value) {
-  const missing = nextFoodMissing(value);
-  return `${item.hintSubject || item.label}再 +${formatMetricValue(missing)}${item.unit}，${item.rewardText}`;
+  return item.key === "performance" ? "業績只顯示成果，不重複計算成件獎勵。" : "依本月來源資料顯示；獎勵以最近入帳結果為準。";
 }
 
 function spiritFoodTotal(metrics = {}) {
@@ -710,7 +711,7 @@ function buildSpiritFoodSummaryCard(metricsSource = {}, periodKey = currentPerio
           <span>您目前${escapeHtml(periodName)}的累積精靈食糧</span>
           <strong>${formatMetricValue(spiritFoodTotal(metrics))}</strong>
         </div>
-        <span class="soft-pill">行程養等級，成果推覺醒</span>
+        <span class="soft-pill">${cloudWorkGrowthUnavailable() ? "工作累積與收藏進度" : "行程養等級，成果推覺醒"}</span>
       </div>
       <p class="small-text">先看最接近的一步，再決定今天補行程、衝成果，或直接把抽卡機會用掉。</p>
     </article>
@@ -726,14 +727,14 @@ function buildSpiritFoodSectionCard(title, items, metrics, tone = "activity") {
       </div>
       <div class="spirit-food-list">
         ${items.map((item) => {
-          const value = foodItemValue(item, metrics);
+          const display = sourceDisplayMetric(item.key, metrics);
           return `
             <article class="spirit-food-row">
               <div class="spirit-food-row-head">
                 <strong>${escapeHtml(item.label)}</strong>
-                <span class="spirit-food-value">${formatMetricValueForItem(value, item)}${escapeHtml(item.unit)}</span>
+                <span class="spirit-food-value">${escapeHtml(display.text)}${display.known ? escapeHtml(item.unit) : ""}</span>
               </div>
-              <p class="spirit-food-reward">${escapeHtml(foodHintText(item, value))}</p>
+              <p class="spirit-food-reward">${escapeHtml(display.negative ? "負值部分遊戲採 0，其他數值依原有規則計算。" : display.known ? foodHintText(item) : "本次來源未提供此欄位。")}</p>
             </article>
           `;
         }).join("")}
@@ -808,7 +809,7 @@ function buildHomeFunctionDock() {
     <nav class="home-function-dock" aria-label="功能頁">
       <div class="home-function-copy">
         <span>功能頁</span>
-        <strong>${tickets > 0 ? `抽卡 ${tickets} 次先用掉` : "先看哪裡快解鎖"}</strong>
+        <strong>${tickets > 0 ? `可用抽卡 ${tickets} 次` : "查看收藏與工作累積"}</strong>
       </div>
       <div class="home-function-grid">
         ${items.map((item) => `
@@ -832,14 +833,12 @@ function buildHomeMetricsStrip(metricsSource = {}) {
       </div>
       <div class="home-metric-grid">
         ${HOME_METRIC_ITEMS.map((item) => {
-          const value = normalizeMetricValue(metrics[item.key] || 0);
-          const hasValue = value > 0;
-          const detail = homeMetricZeroCue(item);
+          const display = sourceDisplayMetric(item.key, metrics);
           return `
-            <article class="home-metric-tile is-${escapeHtml(item.tone)} ${hasValue ? "" : "is-waiting"}">
+            <article class="home-metric-tile is-${escapeHtml(item.tone)} ${display.known ? "" : "is-waiting"}">
               <span>${escapeHtml(item.label)}</span>
-              <strong>${hasValue ? `${formatMetricValueForItem(value, item)}${escapeHtml(item.unit)}` : "待推進"}</strong>
-              ${hasValue ? "" : `<small>${escapeHtml(detail)}</small>`}
+              <strong>${escapeHtml(display.text)}${display.known ? escapeHtml(item.unit) : ""}</strong>
+              ${display.negative ? "<small>負值部分遊戲採 0，其他數值依原有規則計算。</small>" : ""}
             </article>
           `;
         }).join("")}
@@ -858,9 +857,8 @@ function homeMetricZeroCue(item) {
 }
 
 function homeHeroMetricValue(item, metrics) {
-  const value = normalizeMetricValue(metrics[item.key] || 0);
-  if (value <= 0) return "待";
-  return `${formatMetricValueForItem(value, item)}${item.unit || ""}`;
+  const display = sourceDisplayMetric(item.key, metrics);
+  return `${display.text}${display.known ? item.unit || "" : ""}${display.negative ? "（負值部分採0）" : ""}`;
 }
 
 function buildHomeHeroMetricGroup(title, items, metrics) {
@@ -942,9 +940,8 @@ function closestStarProgress() {
     .map((pet) => {
       const owned = getOwned(pet.pet_id);
       if (!owned || owned.star >= 5) return null;
-      const cost = starCost(owned.star + 1);
-      const gap = Math.max(0, cost - rewardCount(owned.duplicate_fragments || 0));
-      return { pet, owned, cost, gap, ready: gap === 0 };
+      const status = starUpgradeStatus(pet, owned);
+      return { pet, owned, cost: status.cost, gap: status.soulGap, levelGap: status.levelGap, ready: status.ready };
     })
     .filter(Boolean)
     .sort((left, right) => Number(right.ready) - Number(left.ready) || left.gap - right.gap)[0] || null;
@@ -963,7 +960,8 @@ function buildHomeResourceStrip() {
   const starText = star
     ? star.ready
       ? `${star.pet.name} 可升 ${star.owned.star + 1} 星`
-      : `${star.pet.name} 還差 ${star.gap} 個星魂`
+      : star.levelGap > 0 && star.gap === 0 ? `${star.pet.name} 星魂已足，還需 ${star.levelGap} 級`
+      : `${star.pet.name} 還差 ${star.gap} 個星魂${star.levelGap > 0 ? `與 ${star.levelGap} 級` : ""}`
     : "抽到重複寵物會累積星魂";
   return `
     <section class="home-panel home-resource-strip" aria-label="目前累積資源">
@@ -997,7 +995,7 @@ function buildHomeTodayChangeStrip(monthlyMetrics = {}) {
     .filter((item) => {
       if (seen.has(item.key)) return false;
       seen.add(item.key);
-      return normalizeMetricValue(metrics[item.key] || 0) > 0;
+      return sourceDisplayMetric(item.key, metrics).known;
     })
     .slice(0, 3);
   if (!changed.length) {
@@ -1013,12 +1011,47 @@ function buildHomeTodayChangeStrip(monthlyMetrics = {}) {
       <strong>本月累積進度</strong>
       <div>
         ${changed.map((item) => `
-          <span>${escapeHtml(item.label)} ${formatMetricValueForItem(metrics[item.key], item)}${escapeHtml(item.unit)}</span>
+          <span>${escapeHtml(item.label)} ${escapeHtml(sourceDisplayMetric(item.key, metrics).text)}${escapeHtml(item.unit)}</span>
         `).join("")}
       </div>
       <p class="home-confirm-cue">依店長最近一次匯入的當月累積資料顯示。</p>
     </section>
   `;
+}
+
+function settlementWorkDeltaText(work) {
+  const fields = [["development_valid", "有效拜訪", "組"], ["showing_group_valid", "帶看", "組"],
+    ["listing_valid", "委託", "件"], ["meeting_valid", "見面談／收訂", "次"], ["contract_valid", "成交分攤", "件"], ["calls", "電話", "通"],
+    ["e_total", "全部行程", "組"], ["e_valid", "有效行程", "組"]];
+  const changes = fields.filter(([key]) => Number.isFinite(work[key]) && work[key] > 0)
+    .map(([key, label, unit]) => `${label} +${work[key]}${unit}`);
+  return changes.length ? changes.join("、") : "已入帳新增資料，差額明細尚未提供。";
+}
+
+function buildRecentSettlementMarkup() {
+  if (playerCloudSyncPending()) return "";
+  const period = state.progress?.period || currentPeriodKey();
+  const summary = state.latestSettlementSummary;
+  const matchesPeriod = isPlainObject(summary) && (summary.report_period || summary.period) === period;
+  const status = matchesPeriod ? String(summary.status || "") : "";
+  const completeStatus = ["changed", "first_import", "no_change"].includes(status);
+  const timestamp = matchesPeriod && summary.settled_at && Number.isFinite(Date.parse(summary.settled_at))
+    ? new Date(summary.settled_at).toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hour12: false }) : "";
+  const hasDeltas = completeStatus && isPlainObject(summary.work_delta);
+  const hasRewards = completeStatus && isPlainObject(summary.rewards_delta);
+  const workText = status === "no_change" ? "本次沒有新增差額，已取得的獎勵保留。"
+    : status === "first_import" ? "首次入帳，尚無前次資料可比較；目前累積已同步。"
+    : status === "legacy" ? "舊版入帳紀錄，沒有完整前次比較摘要。"
+    : status === "changed" && !hasDeltas ? "已入帳新增資料，差額明細尚未提供。"
+    : hasDeltas ? settlementWorkDeltaText(summary.work_delta) : "尚無本月完整入帳摘要。";
+  const rewardText = hasRewards && status !== "no_change" ? rewardTicketSummary(summary.rewards_delta) : "";
+  return `<section class="home-today-change settlement-receipt" aria-label="最近入帳">
+    <strong>${escapeHtml(period)} 最近入帳</strong>
+    <span>${timestamp ? escapeHtml(timestamp) + "（台灣時間）" : "入帳時間尚未提供"}</span>
+    <p>${escapeHtml(workText)}</p>
+    ${rewardText ? `<p>${escapeHtml(rewardText)}</p>` : ""}
+    <small>新增超過同月已認列基準後，由系統結算；資料下修不扣回獎勵。</small>
+  </section>`;
 }
 
 function questWorkLabel(quest) {
@@ -1069,15 +1102,7 @@ function homePetStarCue(pet, owned) {
 }
 
 function homePetDrawCue(metricsSource = state.metrics) {
-  const quests = buildDailyQuests(metricsSource);
-  const resultQuest = quests.find((quest) => quest.key === "result");
-  const contractQuest = quests.find((quest) => quest.key === "contract");
-  const boostedQuest = quests.find((quest) => quest.key === "boosted");
-  if (resultQuest && !resultQuest.done) return "再 1 件委託/見面談/簽約，成果抽更近";
-  if (contractQuest && !contractQuest.done) return "再 1 件成件，祝福抽更近";
-  if (resultQuest?.done || contractQuest?.done) return "下一筆成果會繼續推進成果抽";
-  if (boostedQuest && !boostedQuest.done) return "再補拜訪進度，拜訪池更近";
-  return "再補 1 組拜訪，抽卡入口更近";
+  return "工作成果由系統結算，夥伴與收藏會持續保留。";
 }
 
 function ticketDeltaParts(delta = {}) {
@@ -1185,18 +1210,11 @@ function pilotMissionOption(metricsSource, metricKey) {
 }
 
 function buildPilotMission(metricsSource = state.metrics) {
-  const metrics = normalizeGameMetrics(metricsSource);
-  const showing = pilotMissionOption(metrics, "showing");
-  const development = pilotMissionOption(metrics, "development");
-  const selected = development.gap + 1 < showing.gap ? development : showing;
-  const isShowing = selected.key === "showing";
   return {
-    ...selected,
-    eyebrow: isShowing ? "試營運主任務" : "次要替代任務",
-    title: `再補 ${formatMetricValue(selected.gap)} 組${selected.label}`,
-    detail: `${selected.route}／${selected.petName}會${selected.routeVerb}，預計推進：${selected.rewardText}。`,
-    buttonLabel: `去補${selected.label}`,
-    focusSelector: `[data-quest="${selected.questKey}"]`,
+    key: "records", label: "本月紀錄", route: "本月累積", gap: 0,
+    eyebrow: "工作紀錄", title: "查看本月紀錄",
+    detail: "工作累積與已入帳獎勵分開保存，新增差額由系統確認。",
+    buttonLabel: "查看本月紀錄", focusSelector: ".home-metrics-strip",
   };
 }
 
@@ -1229,9 +1247,9 @@ function questProgressState(quest) {
       target: 1,
       gap: 1,
       percent: 0,
-      actionText: "補 1 通電話",
-      unlockText: "補 1 通電話 → 免費池 +1",
-      label: "差 1 通電話",
+      actionText: "查看工作累積",
+      unlockText: "新增超過已認列基準後，由系統結算",
+      label: "等待新資料結算",
     };
   }
   const current = normalizeMetricValue(quest.current || 0);
@@ -1247,9 +1265,9 @@ function questProgressState(quest) {
     target,
     gap,
     percent,
-    actionText: action,
-    unlockText,
-    label: gap > 0 ? `差 ${formatMetricValue(gap)} ${copy.unit}` : "可推進",
+    actionText: "查看工作累積",
+    unlockText: "新增超過已認列基準後，由系統結算",
+    label: "等待新資料結算",
   };
 }
 
@@ -1393,7 +1411,7 @@ function homeOpeningGreetingMarkup() {
   if (!pet) return "";
   const opening = readHomeOpeningState();
   if (!opening.firstOpenToday) return "";
-  const streakText = opening.openStreak >= 3 ? `連續開啟 ${opening.openStreak} 天，火種還在。` : "今天先補一件最短任務。";
+  const streakText = "夥伴與收藏都在，照自己的步調繼續。";
   const settlementCue = yesterdaySettlementCue();
   return `
     <div class="home-greeting-card is-${escapeHtml(opening.tone)}" aria-live="polite">
@@ -1446,6 +1464,7 @@ function switchToView(view, options = {}) {
   document.querySelectorAll(".view-panel").forEach((item) => item.classList.toggle("is-active", item.id === panelId));
   if (view === "collection") renderCollection();
   if (view === "bag") renderInventoryBag();
+  renderPetActionStatus();
   if (options.scroll !== false && typeof panel.scrollIntoView === "function") {
     panel.scrollIntoView({ block: "start", behavior: "smooth" });
   }
@@ -1487,7 +1506,7 @@ function buildHomeDecisionCard(deltaMetrics = {}, periodKey = currentPeriodKey()
   const shouldDrawFirst = readyTickets > 0;
   const workLabel = shouldDrawFirst ? "去抽卡" : mission.buttonLabel;
   const actionView = shouldDrawFirst ? "gacha" : "today";
-  const title = shouldDrawFirst ? `先把 ${readyTickets} 次抽卡用掉` : mission.title;
+  const title = shouldDrawFirst ? `目前有 ${readyTickets} 次可用抽卡` : mission.title;
   const reward = shouldDrawFirst
     ? "新卡、蛋或精華立刻入袋"
     : mission.rewardText
@@ -1714,12 +1733,12 @@ function buildHomeHeroPanel(metricsSource = {}, periodKey = currentPeriodKey(), 
   const freeDraws = remainingDailyFreeDraws();
   const opening = readHomeOpeningState();
   const daysLeft = monthEndDaysLeft();
-  const drawLabel = tickets > 0 ? `去抽卡 ${tickets} 次` : "看怎麼解鎖抽卡";
+  const drawLabel = tickets > 0 ? `去抽卡 ${tickets} 次` : "查看工作累積";
   const drawProgress = tickets > 0
-    ? { percent: 100, label: `可抽 ${tickets} 次`, unlockText: "先把抽卡機會用掉" }
+    ? { percent: 100, label: `可抽 ${tickets} 次`, unlockText: "查看可用抽數" }
     : nextBestTicketProgress(state.metrics);
   const nextLevelGoal = pet ? buildActivePetGrowthGoals(pet, owned).find((goal) => goal.title === "下一級") : null;
-  const petGrowthCue = nextLevelGoal?.detail || "行程養等級，成果推覺醒";
+  const petGrowthCue = nextLevelGoal?.detail || (cloudWorkGrowthUnavailable() ? "工作經驗尚未開放" : "行程養等級，成果推覺醒");
   const petLevel = Number(owned?.level || 1);
   const petExp = Math.max(0, Number(owned?.exp || 0));
   const petExpNeed = expNeeded(petLevel);
@@ -1729,9 +1748,7 @@ function buildHomeHeroPanel(metricsSource = {}, periodKey = currentPeriodKey(), 
   const petDrawCue = pet ? homePetDrawCue(metrics) : "蛋與精華會先保留在背包";
   const nextQuest = actionableDailyQuest(state.metrics) || actionableDailyQuest(state.metrics, { allowZeroReward: true });
   const zeroDrawCue = `${questActionLabel(nextQuest)}，抽卡入口就會亮。`;
-  const nextDrawCue = tickets > 0
-    ? priority.detail || priority.title || "再補一點行程或成果，抽卡入口就會亮起"
-    : zeroDrawCue;
+  const nextDrawCue = "新增差額由系統確認，現有收藏照自己的步調養成。";
   const drawButtonAttr = tickets > 0 ? 'data-view="gacha"' : 'data-pilot-mission="home"';
   const foodTotal = spiritFoodTotal(metrics);
   const foodText = foodTotal > 0 ? formatMetricValue(foodTotal) : "待啟動";
@@ -1741,8 +1758,7 @@ function buildHomeHeroPanel(metricsSource = {}, periodKey = currentPeriodKey(), 
         <span class="summon-kicker">房仲精靈</span>
         <strong>歡迎 ${escapeHtml(PROFILE.agent)} 回來，養成專區</strong>
         <div class="home-hero-pills">
-          <span class="home-streak-badge is-${escapeHtml(opening.tone)}">🔥${opening.openStreak}</span>
-          <span class="home-month-left ${daysLeft <= 5 ? "is-hot" : ""}">本月剩 ${daysLeft} 天</span>
+          <span class="home-month-left">${escapeHtml(periodDisplayName(periodKey))}的冒險</span>
         </div>
         <div class="home-food-count">
           <span>${escapeHtml(periodDisplayName(periodKey))}精靈食糧</span>
@@ -1777,8 +1793,8 @@ function buildHomeHeroPanel(metricsSource = {}, periodKey = currentPeriodKey(), 
         <button class="secondary-button home-draw-button" type="button" ${drawButtonAttr}>${drawLabel}</button>
       </div>
       <div class="home-draw-cues">
-        ${buildPilotMissionCard(metrics, { compact: true })}
-        <p class="home-next-cue">${escapeHtml(tickets > 0 ? nextDrawCue : drawProgress.unlockText)}</p>
+        <button class="secondary-button" type="button" data-work-records="1">查看本月紀錄</button>
+        <p class="home-next-cue">${escapeHtml(nextDrawCue)}</p>
       </div>
     </section>
   `;
@@ -2051,6 +2067,39 @@ function normalizeGameMetrics(metrics = {}) {
   return Object.fromEntries(GAME_SOURCE_METRIC_KEYS.map((key) => [key, normalizeMetricValue(metrics[key])]));
 }
 
+// Display uses the supplied API fields, independently of legacy game rounding.
+function sourceDisplayMetric(key, fallbackMetrics = {}) {
+  const raw = state.displaySourceMetrics;
+  const numeric = (value) => typeof value === "number" && Number.isFinite(value) ? value : null;
+  const show = (value) => value === null ? "未提供" : `${value < 0 ? "-" : ""}${formatMetricValue(Math.abs(value))}`;
+  if (!isPlainObject(raw)) {
+    const value = numeric(fallbackMetrics[key]);
+    return { known: value !== null, value, text: show(value), negative: value < 0 };
+  }
+  const map = {
+    area: ["a_area_total"], development: ["b_development_total"], negotiation: ["c_negotiation_total"],
+    showing: ["d_showing_group"], calls: ["calls"], listing: ["listing", "rent_listing"],
+    meeting: ["meeting_or_offer", "rent_meeting_or_offer"], contract: ["contract", "rent_contract"],
+    price: ["price_revision"], offer: ["test_offer"], performance: ["test_performance"],
+  };
+  const paired = Object.values(raw).some((value) => isPlainObject(value));
+  if (!paired) {
+    const value = numeric(raw[key]);
+    return { known: value !== null, value, text: show(value), negative: value < 0 };
+  }
+  const fields = map[key] || [];
+  const values = fields.map((field) => ({ valid: numeric(raw[field]?.valid), total: numeric(raw[field]?.total) }));
+  if (values.length === 2) {
+    const [buy, rent] = values.map((value) => value.valid);
+    return { known: buy !== null || rent !== null, value: buy !== null && rent !== null ? (Math.round(buy * 100) + Math.round(rent * 100)) / 100 : null,
+      text: `買賣 ${show(buy)}／租賃 ${show(rent)}`, negative: buy < 0 || rent < 0 };
+  }
+  const { valid = null, total = null } = values[0] || {};
+  const group = ["area", "development", "negotiation", "showing", "calls"].includes(key);
+  return { known: group ? valid !== null || total !== null : valid !== null, value: valid,
+    text: group ? `有效 ${show(valid)}／全部 ${show(total)}` : show(valid), negative: valid < 0 || total < 0 };
+}
+
 function createReportGroups() {
   return Object.fromEntries(GAME_SOURCE_METRIC_KEYS.map((key) => [key, { effective: 0, total: 0 }]));
 }
@@ -2129,18 +2178,24 @@ function buildMonthlyBaseTargets({ basis = {}, groups = {}, source = {} } = {}) 
 }
 
 function buildFourPlusProgress({ basis = {}, mainEffective = 0, mainTotal = 0 } = {}) {
+  const optionalValue = (keys) => {
+    for (const key of keys) {
+      if (basis[key] === undefined || basis[key] === null || basis[key] === "" || typeof basis[key] === "boolean") continue;
+      const value = Number(basis[key]);
+      if (Number.isFinite(value) && value >= 0) return value;
+    }
+    return null;
+  };
   const target = basisMetricNumber(basis, ["e_daily_target", "daily_target", "four_plus_target"]) || 4;
   const validDays = basisMetricNumber(basis, ["valid_days", "effective_days", "active_days", "report_days", "work_days"]);
-  const allDailyAverage = basisMetricNumber(basis, ["e_total_daily_average", "e_all_daily_average", "e_daily_average", "e_daily_avg", "daily_e_average"]);
-  const effectiveDailyAverage = basisMetricNumber(basis, ["e_valid_daily_average", "e_effective_daily_average"]);
-  const allTotal = basisMetricNumber(basis, ["e_total", "e_total_group", "e_all_total", "e_daily_total"]);
-  const effectiveTotal = basisMetricNumber(basis, ["e_valid", "e_daily_numerator"]);
-  const current = allDailyAverage || (validDays > 0
-    ? normalizeMetricValue((allTotal || mainTotal) / validDays)
-    : allTotal || mainTotal);
-  const effectiveCurrent = effectiveDailyAverage || (validDays > 0
-    ? normalizeMetricValue((effectiveTotal || mainEffective) / validDays)
-    : effectiveTotal || mainEffective);
+  const allDailyAverage = optionalValue(["e_total_daily_average", "e_all_daily_average", "e_daily_average", "e_daily_avg", "daily_e_average"]);
+  const effectiveDailyAverage = optionalValue(["e_valid_daily_average", "e_effective_daily_average"]);
+  const allTotal = optionalValue(["e_total", "e_total_group", "e_all_total", "e_daily_total"]) ?? mainTotal;
+  const effectiveTotal = optionalValue(["e_valid", "e_daily_numerator"]) ?? mainEffective;
+  const available = allDailyAverage !== null || validDays > 0;
+  const effectiveAvailable = effectiveDailyAverage !== null || validDays > 0;
+  const current = allDailyAverage ?? (validDays > 0 ? normalizeMetricValue(allTotal / validDays) : 0);
+  const effectiveCurrent = effectiveDailyAverage ?? (validDays > 0 ? normalizeMetricValue(effectiveTotal / validDays) : 0);
   return {
     label: "日均行程（全部）",
     current,
@@ -2149,10 +2204,12 @@ function buildFourPlusProgress({ basis = {}, mainEffective = 0, mainTotal = 0 } 
     extra: Math.max(0, normalizeMetricValue(current - target)),
     gap: Math.max(0, normalizeMetricValue(target - current)),
     validDays,
-    sourceTotal: allTotal || mainTotal,
-    effectiveSourceTotal: effectiveTotal || mainEffective,
-    dailyAverage: Boolean(allDailyAverage || validDays > 0),
-    done: current >= target,
+    sourceTotal: allTotal,
+    effectiveSourceTotal: effectiveTotal,
+    available,
+    effectiveAvailable,
+    dailyAverage: available,
+    done: available && current >= target,
   };
 }
 
@@ -2727,6 +2784,12 @@ function applyBackendEmployeeSnapshot(snapshot = {}, options = {}) {
     sourceMetrics,
     deltaMetrics,
   );
+  if (Object.prototype.hasOwnProperty.call(snapshot, "awardedSourceMetrics")) {
+    state.awardedSourceMetrics = snapshot.awardedSourceMetrics;
+  }
+  if (Object.prototype.hasOwnProperty.call(snapshot, "displaySourceMetrics")) {
+    state.displaySourceMetrics = snapshot.displaySourceMetrics;
+  }
   applyCloudResetMarker(snapshot.lastResetAt);
   if (snapshot.replaceInventory) {
     if (isPlainObject(snapshot.tickets)) state.tickets = normalizeTicketBalances(snapshot.tickets);
@@ -2823,7 +2886,9 @@ function cloudPlayerStateToSnapshot(data = {}) {
   const snapshot = {
     period: data.period || currentPeriodKey(),
     sourceMetrics,
-    deltaMetrics: normalizePlayerSourceMetrics(data.latest_delta || data.delta_metrics || data.deltaMetrics || sourceMetrics),
+    displaySourceMetrics: JSON.parse(JSON.stringify(data.source_metrics || data.sourceMetrics || {})),
+    deltaMetrics: normalizePlayerSourceMetrics(data.latest_delta || data.delta_metrics || data.deltaMetrics || {}),
+    awardedSourceMetrics: isPlainObject(data.awarded_metrics) ? JSON.parse(JSON.stringify(data.awarded_metrics)) : null,
     basis: data.event_basis || data.eventBasis || {},
     drawPoints: isPlainObject(resources.draw_points) ? resources.draw_points : {},
     drawStats: isPlainObject(resources.draw_stats) ? resources.draw_stats : {},
@@ -2855,7 +2920,7 @@ function applyCloudPlayerState(data = {}, options = {}) {
   const snapshot = cloudPlayerStateToSnapshot(data);
   applyBackendEmployeeSnapshot(snapshot, { persist: false, render: false });
   state.activePetId = resolveOwnedActivePetId(snapshot.activePetId, state.collection);
-  if (snapshot.settlementSummary) state.latestSettlementSummary = snapshot.settlementSummary;
+  state.latestSettlementSummary = snapshot.settlementSummary || null;
   state.manager.cloudStatus = CLOUD_API_BASE_URL === "mock" ? "mock-playerState" : "cloud-playerState";
   if (options.persist !== false) saveState();
   preloadPreparedDrawAssets();
@@ -3034,12 +3099,12 @@ function mockCloudEnvelope(action, payload = {}) {
           previous: { file_name: `${period}_previous_行程質量統計.xlsx`, file_hash: "sha256:mock-previous" },
         },
         players: [
-          { uid: "490326", agent_name: "蔡晉豪", event_basis: { valid_days: 4, e_total_daily_average: 4, e_daily_target_met: true, monthly_policy_development_plus_showing: 6, bcd_valid: 7 }, source_metrics: SAMPLE_METRICS, draw_points_balance: 8, tickets: { general: 6, visit: 2, showing: 2, result: 3, contract: 0 }, guaranteed_draws: { development: 1, showing: 0, listing: 0, contract: 0 }, collection_count: 2, latest_settlement_status: "changed", updated_at: new Date().toISOString() },
-          { uid: "490101", agent_name: "示範同仁A", event_basis: { valid_days: 5, e_total_daily_average: 3.6, e_daily_target_met: false, monthly_policy_development_plus_showing: 12, bcd_valid: 5 }, source_metrics: { ...SAMPLE_METRICS, listing: 2, contract: 1, showing: 5 }, draw_points_balance: 4, tickets: { general: 4, visit: 1, showing: 5, result: 2, contract: 1 }, guaranteed_draws: { development: 0, showing: 1, listing: 0, contract: 1 }, collection_count: 4, latest_settlement_status: "first_import", updated_at: new Date().toISOString() },
+          { uid: "demo-agent-b", agent_name: "示範同仁B", event_basis: { valid_days: 4, e_total_daily_average: 4, e_daily_target_met: true, monthly_policy_development_plus_showing: 6, bcd_valid: 7 }, source_metrics: SAMPLE_METRICS, draw_points_balance: 8, tickets: { general: 6, visit: 2, showing: 2, result: 3, contract: 0 }, guaranteed_draws: { development: 1, showing: 0, listing: 0, contract: 0 }, collection_count: 2, latest_settlement_status: "changed", updated_at: new Date().toISOString() },
+          { uid: "demo-agent-a", agent_name: "示範同仁A", event_basis: { valid_days: 5, e_total_daily_average: 3.6, e_daily_target_met: false, monthly_policy_development_plus_showing: 12, bcd_valid: 5 }, source_metrics: { ...SAMPLE_METRICS, listing: 2, contract: 1, showing: 5 }, draw_points_balance: 4, tickets: { general: 4, visit: 1, showing: 5, result: 2, contract: 1 }, guaranteed_draws: { development: 0, showing: 1, listing: 0, contract: 1 }, collection_count: 4, latest_settlement_status: "first_import", updated_at: new Date().toISOString() },
         ],
         manager_test_player: {
-          uid: "293127",
-          agent_name: "游榮哲",
+          uid: "demo-manager",
+          agent_name: "示範店長",
           source_metrics: {
             a_area_total: { valid: 2, total: 2 },
             b_development_total: { valid: 4, total: 4 },
@@ -3071,10 +3136,10 @@ function mockCloudEnvelope(action, payload = {}) {
     const players = scope === "all_players"
       ? [
         ...mockCloudEnvelope("managerDashboard").data.players,
-        { uid: "293127", agent_name: "游榮哲" },
-        { uid: "327350", agent_name: "王若馨" },
+        { uid: "demo-manager", agent_name: "示範店長" },
+        { uid: "demo-support", agent_name: "示範助理" },
       ]
-      : [{ uid: "293127", agent_name: "游榮哲" }];
+      : [{ uid: "demo-manager", agent_name: "示範店長" }];
     return {
       ok: true,
       action,
@@ -3109,7 +3174,7 @@ function mockCloudEnvelope(action, payload = {}) {
       ok: true,
       action,
       server_time: new Date().toISOString(),
-      data: { uid: "293127", period: payload.period || period, source_metrics: sourceMetrics, ranking_eligible: false },
+      data: { uid: "demo-manager", period: payload.period || period, source_metrics: sourceMetrics, ranking_eligible: false },
       warnings: [],
       errors: [],
     };
@@ -3143,8 +3208,8 @@ function mockCloudEnvelope(action, payload = {}) {
         preview_token: "mock_import_001",
         summary: { matched_active_players: 2, team_rows: 1, skipped_rows: 0, missing_active_players: 0, warning_count: 0 },
         player_previews: [
-          { uid: "490326", report_name: "蔡晉豪", report_period: period, current_source_metrics: { b_development_total: { valid: 4, total: 7 }, d_showing_group: { valid: 2, total: 2 }, listing: { valid: 1, total: 1 } }, event_basis: { e_valid: 3, e_total: 4.2, bcd_valid: 5, monthly_policy_development_plus_showing: 6 }, reward_preview: { draw_points_delta: 3 }, row_status: "MATCHED" },
-          { uid: "490101", report_name: "示範同仁A", report_period: period, current_source_metrics: { b_development_total: { valid: 8, total: 10 }, d_showing_group: { valid: 5, total: 5 }, listing: { valid: 2, total: 2 }, contract: { valid: 1, total: 1 } }, event_basis: { e_valid: 7, e_total: 12, bcd_valid: 10, monthly_policy_development_plus_showing: 13 }, reward_preview: { draw_points_delta: 7 }, row_status: "MATCHED" },
+          { uid: "demo-agent-b", report_name: "示範同仁B", report_period: period, current_source_metrics: { b_development_total: { valid: 4, total: 7 }, d_showing_group: { valid: 2, total: 2 }, listing: { valid: 1, total: 1 } }, event_basis: { e_valid: 3, e_total: 4.2, bcd_valid: 5, monthly_policy_development_plus_showing: 6 }, reward_preview: { draw_points_delta: 3 }, row_status: "MATCHED" },
+          { uid: "demo-agent-a", report_name: "示範同仁A", report_period: period, current_source_metrics: { b_development_total: { valid: 8, total: 10 }, d_showing_group: { valid: 5, total: 5 }, listing: { valid: 2, total: 2 }, contract: { valid: 1, total: 1 } }, event_basis: { e_valid: 7, e_total: 12, bcd_valid: 10, monthly_policy_development_plus_showing: 13 }, reward_preview: { draw_points_delta: 7 }, row_status: "MATCHED" },
         ],
         warnings: [],
       },
@@ -4024,7 +4089,7 @@ function excelGameMetrics(metrics) {
 }
 
 function normalizePlayerSourceMetrics(metrics = {}) {
-  if (isPlainObject(metrics) && ("a_area_total" in metrics || "b_development_total" in metrics || "d_sales_total" in metrics)) {
+  if (isPlainObject(metrics) && Object.values(metrics).some((value) => isPlainObject(value) && ("valid" in value || "total" in value))) {
     return excelGameMetrics(metrics);
   }
   return normalizeGameMetrics(metrics);
@@ -4458,7 +4523,7 @@ function addDuplicateStarSoul(owned) {
 
 function canHatchPet(petId) {
   const pet = getPet(petId);
-  return Boolean(pet && eggCount(petId) > 0 && essenceCount(pet.storyline_id) >= HATCH_ESSENCE_COST);
+  return Boolean(pet && !petResourceActionBlocked() && eggCount(petId) > 0 && essenceCount(pet.storyline_id) >= HATCH_ESSENCE_COST);
 }
 
 async function hatchPet(petId) {
@@ -4714,14 +4779,14 @@ function buildActivePetGrowthGoals(pet, owned) {
 
   goals.push({
     title: "下一級",
-    detail: `再 ${levelNeed} 經驗到 Lv.${owned.level + 1}`,
+    detail: cloudWorkGrowthUnavailable() ? "工作經驗尚未開放，既有等級保留" : `再 ${levelNeed} 經驗到 Lv.${owned.level + 1}`,
     done: false,
   });
 
   if (pet.available_forms.includes("成長型")) {
     goals.push({
       title: "成長型",
-      detail: owned.level >= 6 ? "已解鎖" : `Lv.${owned.level}/6，行程量會補經驗`,
+      detail: owned.level >= 6 ? "已解鎖" : `Lv.${owned.level}/6，${cloudWorkGrowthUnavailable() ? "工作經驗尚未開放" : "行程量會補經驗"}`,
       done: owned.level >= 6,
     });
   }
@@ -4944,12 +5009,15 @@ function rewardTicketSummary(rewards = {}) {
   const guaranteed = normalizeGuaranteedDraws(source?.guaranteed_draws || source?.guaranteedDraws);
   GUARANTEED_DRAW_POOLS.filter((pool) => pool.key !== "contract").forEach((pool) => {
     const amount = Number(guaranteed[pool.key] || 0);
-    if (amount > 0) parts.push(`${pool.shortName}保證卡 +${rewardCount(amount)}`);
+    if (amount > 0) parts.push(`${pool.name} +${rewardCount(amount)}`);
   });
   const contractBatches = Array.isArray(source?.contract_guarantee_batches) ? source.contract_guarantee_batches : [];
   if (contractBatches.length) parts.push(`成交保底批次 ${contractBatches.map((draws) => `${rewardCount(draws)}抽`).join("+")}`);
+  Object.entries(isPlainObject(source?.materials) ? source.materials : {}).forEach(([key, amount]) => {
+    if (Number.isFinite(amount) && amount > 0) parts.push(`${materialLabel(key)} +${amount}`);
+  });
   if (parts.length) return `新獎勵：${parts.join("、")}`;
-  return "新券：本次未新增，先看下一個主任務";
+  return "本次沒有可顯示的獎勵明細。";
 }
 
 function petStateSummaryFromRewards(rewards = {}) {
@@ -4961,6 +5029,7 @@ function petStateSummaryFromRewards(rewards = {}) {
 }
 
 function buildSettlementLoopCard(rewards = state.lastRewards, settlement = state.dailySettlements?.[todayKey()]) {
+  if (CLOUD_API_BASE_URL) return buildRecentSettlementMarkup();
   if (!settlement && !rewards) return "";
   const summaryText = backendSettlementSummaryText(settlement?.summary || settlement?.settlementSummary || state.latestSettlementSummary);
   const metrics = normalizeGameMetrics(settlement?.deltaMetrics || settlement?.metrics || state.metrics || {});
@@ -5020,7 +5089,7 @@ function totalTickets() {
 }
 
 function guaranteedPoolConfig(poolKey) {
-  return GUARANTEED_DRAW_POOLS.find((pool) => pool.poolKey === poolKey || pool.key === poolKey) || null;
+  return GUARANTEED_DRAW_POOLS.find((pool) => pool.poolKey === poolKey) || null;
 }
 
 function displayPoolKey(poolKey) {
@@ -5078,7 +5147,7 @@ function integratedGuaranteeForPool(poolKey) {
     result: "listing",
     contract: "contract",
   }[poolKey];
-  return guaranteeKey ? guaranteedPoolConfig(guaranteeKey) : null;
+  return GUARANTEED_DRAW_POOLS.find((pool) => pool.key === guaranteeKey) || null;
 }
 
 function integratedGuaranteeBalance(guarantee) {
@@ -5171,11 +5240,17 @@ function buildGrowthFocus(pet = getActivePet(), owned = pet ? getOwned(pet.pet_i
   if (!pet || !owned) {
     return {
       title: "先取得主寵",
-      detail: "抽到第一隻夥伴後，行程就會變成牠的經驗。",
+      detail: cloudWorkGrowthUnavailable() ? "完整寵物或孵化後加入收藏；工作經驗尚未開放。" : "抽到第一隻夥伴後，行程就會變成牠的經驗。",
       value: "待啟動",
       tone: "soft",
     };
   }
+  if (cloudWorkGrowthUnavailable()) return {
+    title: "等級成長",
+    detail: "工作經驗尚未開放，既有等級與星魂保留。",
+    value: `Lv.${owned.level || 1}`,
+    tone: "soft",
+  };
   const expMax = expNeeded(owned.level || 1);
   const need = Math.max(0, expMax - Number(owned.exp || 0));
   const nextForm = owned.level >= 6 ? currentForm(pet, owned) : "成長型";
@@ -5214,6 +5289,10 @@ function buildAwakenFocus(pet = getActivePet(), owned = pet ? getOwned(pet.pet_i
       tone: "ready",
     };
   }
+  if (cloudAwakeningUnavailable()) {
+    return { title: "成果覺醒線", detail: owned.star >= 5 && hasMaterials(pet.required_awaken_materials)
+      ? "條件已足，正式覺醒尚未開放；素材繼續保留。" : "覺醒準備條件可在卡片庫查看，素材繼續保留。", value: "準備中", tone: "soft" };
+  }
   if (canAwaken(pet, owned)) {
     return {
       title: "成果覺醒線",
@@ -5242,7 +5321,9 @@ function buildAwakenFocus(pet = getActivePet(), owned = pet ? getOwned(pet.pet_i
 }
 
 function findFirstActionableCollection() {
-  const hatch = PETS.find((pet) => canHatchPet(pet.pet_id));
+  const preferred = getCollectionTarget();
+  const orderedPets = preferred ? [preferred, ...PETS.filter((pet) => pet.pet_id !== preferred.pet_id)] : PETS;
+  const hatch = orderedPets.find((pet) => canHatchPet(pet.pet_id));
   if (hatch) {
     const hatchOwned = getOwned(hatch.pet_id);
     return {
@@ -5255,13 +5336,10 @@ function findFirstActionableCollection() {
         : `${hatch.name} 的蛋與精華已足，可以孵化。`,
     };
   }
-  const ownedPets = PETS
+  const ownedPets = orderedPets
     .map((pet) => ({ pet, owned: getOwned(pet.pet_id) }))
     .filter((item) => item.owned);
-  const star = ownedPets.find(({ owned }) => {
-    const nextStar = owned.star + 1;
-    return owned.star < 5 && owned.level >= starLevelRequirement(nextStar) && owned.duplicate_fragments >= starCost(nextStar);
-  });
+  const star = ownedPets.find(({ pet, owned }) => starUpgradeStatus(pet, owned).ready);
   if (star) return { ...star, type: "star", label: "去升星", text: `${star.pet.name} 星魂已足，可以升星。` };
   const awaken = ownedPets.find(({ pet, owned }) => canAwaken(pet, owned));
   if (awaken) return { ...awaken, type: "awaken", label: "去覺醒", text: `${awaken.pet.name} 已達覺醒條件。` };
@@ -5479,7 +5557,7 @@ function poolExperienceCue(pool, candidates, unlocked) {
     if (pool.key === "showing") return "帶看進度已入帳，可以抽帶看線素材與夥伴。";
     if (pool.key === "result") return "成果已入帳，可以抽成果線素材與夥伴。";
     if (pool.key === "contract") return "成交進度已入帳，可以抽成交線素材與夥伴。";
-    return "先把可抽次數用掉，重複寵物也會變星魂。";
+    return "可以查看可用抽數，重複寵物會變成星魂。";
   }
   return candidates.length ? `${progress.unlockText}，這裡就能抽。` : "卡池內容正在接入，先累積行程不會浪費。";
 }
@@ -5542,7 +5620,16 @@ function poolWorkProgressDetails(poolKey) {
       next: `再 ${formatMetricValue(2 - (source.meeting % 2 || 0))} 次見面談可增加 1 抽；成交每增加 0.1 件也增加 1 抽`,
     },
   };
-  return { value, nextPercent, ...(details[poolKey] || details.general) };
+  if (isPlainObject(state.displaySourceMetrics)) {
+    const read = (key) => sourceDisplayMetric(key, source).text;
+    details.general.total = `本月電話：${read("calls")}`;
+    details.visit.total = `本月累積拜訪：${read("development")} · 社區服務 ${read("area")}`;
+    details.showing.total = `本月帶看：${read("showing")}`;
+    details.result.total = `本月委託：${read("listing")} · 見面談／收訂 ${read("meeting")}`;
+    details.contract.total = `本月成交分攤：${read("contract")} · 見面談／收訂 ${read("meeting")}`;
+  }
+  return { value, nextPercent, ...(details[poolKey] || details.general),
+    next: "新增超過同月已認列基準後，由系統結算。保留目前累積，不因下修扣回獎勵。" };
 }
 
 const POOL_NEXT_PROGRESS_COPY = Object.freeze({
@@ -5569,9 +5656,9 @@ function nextPoolTicketProgress(poolKey) {
     target: completed + 1,
     gap,
     percent: Math.round(remainder * 100),
-    actionText,
-    unlockText: `${actionText} → ${copy.reward}`,
-    label: `差 ${formatMetricValue(gap)} ${copy.unit}`,
+    actionText: "查看工作累積",
+    unlockText: "新增超過已認列基準後，由系統結算",
+    label: "等待新資料結算",
   };
 }
 
@@ -5624,7 +5711,7 @@ function poolThemeClass(poolKey) {
 
 function poolUnlockButtonLabel(poolKey) {
   const progress = nextPoolTicketProgress(poolKey);
-  return `${progress.label}可再抽`;
+  return "查看結算說明";
 }
 
 function showActionToast(message) {
@@ -6274,6 +6361,7 @@ function drawCloudGateModel(apiBaseUrl = CLOUD_API_BASE_URL, ready = cloudPlayer
 }
 
 function canStartDraw(poolKey) {
+  if (["saving", "uncertain"].includes(cloudPetActionState.phase)) return false;
   const cloudGate = drawCloudGateModel();
   const productionSequenceRequired = cloudGate.preparedSequenceRequired;
   if (cloudGate.blocked) return false;
@@ -7078,16 +7166,33 @@ async function drawCloudBatch(entries, batchRevealId) {
 }
 
 async function runCloudPetAction(actionType, petId) {
+  if (petResourceActionBlocked()) return false;
+  const attempt = { uid: PROFILE.employeeId || PROFILE.userKey, period: currentPeriodKey(), settled: false, definitive: false };
+  cloudPetActionAttempt = attempt;
+  cloudPetActionState = { phase: "saving", message: "正在保存這次養成操作，請稍候。" };
+  render();
+  const observe = (envelope) => {
+    attempt.settled = true;
+    attempt.definitive = definitivePetActionResponse(envelope, attempt);
+    if (cloudPetActionAttempt === attempt && cloudPetActionState.phase === "uncertain" && attempt.definitive) {
+      cloudPetActionState.message = "已收到原操作回覆，正在核對最新資源。";
+      renderPetActionStatus();
+      confirmPendingPetAction();
+    }
+    return envelope;
+  };
+  const request = Promise.resolve().then(() => postCloudEnvelope("petAction", {
+    uid: attempt.uid, period: attempt.period, action_type: actionType, pet_id: petId, client_request_id: randomClientId("pet-action"),
+  })).then(observe, (error) => { attempt.settled = true; throw error; });
   try {
-    const envelope = await postCloudEnvelope("petAction", {
-      uid: PROFILE.employeeId || PROFILE.userKey,
-      period: currentPeriodKey(),
-      action_type: actionType,
-      pet_id: petId,
-      client_request_id: randomClientId("pet-action"),
-    });
+    const envelope = await runRequestWithDeadline(() => request, { timeoutMs: 20000, timeoutCode: "PET_ACTION_UNCONFIRMED", timeoutMessage: "結果尚待確認" });
+    if (envelope?.ok === false && attempt.definitive) {
+      cloudPetActionState = { phase: "error", message: envelope.errors[0].message || "條件尚未滿足，未完成這次操作。" };
+      render();
+      return false;
+    }
     const data = cloudEnvelopeData(envelope, "petAction");
-    if (!data?.player_state) throw new Error("petAction response missing player_state");
+    if (!attempt.definitive || !data?.player_state) throw new Error("petAction response missing a valid player_state");
     applyCloudPlayerState(data.player_state);
     state.history.unshift({
       type: "system",
@@ -7096,15 +7201,65 @@ async function runCloudPetAction(actionType, petId) {
     });
     state.history = state.history.slice(0, 12);
     state.manager.cloudStatus = "cloud-petAction";
+    cloudPetActionState = { phase: "idle", message: data.message || "養成操作已保存。" };
     saveState();
     render();
     return true;
   } catch (error) {
     state.manager.cloudStatus = `cloud-petAction-error:${error.message || "unknown"}`;
+    cloudPetActionState = { phase: "uncertain", message: "結果待確認，尚未重新送出。請先重新同步，再核對資源。" };
     saveState();
     render();
     return false;
   }
+}
+
+function definitivePetActionResponse(envelope, attempt) {
+  if (envelope?.action !== "petAction") return false;
+  const rejected = ["PET_LEVEL_REQUIRED", "STAR_SOUL_REQUIRED", "FIVE_STAR_REQUIRED", "EGG_REQUIRED", "ESSENCE_REQUIRED", "PET_NOT_OWNED", "UNKNOWN_PET_ACTION", "STAR_MAX", "TEMPLE_PET_REQUIRED"];
+  if (envelope.ok === false) return rejected.includes(envelope.errors?.[0]?.code);
+  const player = cloudEnvelopeData(envelope, "petAction")?.player_state;
+  return validCloudPlayerStateData(player, { allowDeferredDrawSession: true })
+    && validCloudPlayerStateIdentity(player, attempt.uid, attempt.period);
+}
+
+function petResourceActionBlocked() {
+  return playerCloudSyncPending() || ["saving", "uncertain"].includes(cloudPetActionState.phase)
+    || Boolean(drawRequest || drawClaimBatchInFlight || pendingPreparedDrawClaims.length || activePreparedDrawClaims.length);
+}
+
+function renderPetActionStatus() {
+  const target = document.getElementById("petActionStatus");
+  if (!target) return;
+  target.hidden = !cloudPetActionState.message;
+  target.innerHTML = `<span>${escapeHtml(cloudPetActionState.message)}</span>${cloudPetActionState.phase === "uncertain"
+    ? '<button class="secondary-button" type="button" data-pet-action-sync="1">重新同步</button>' : ""}`;
+  if (petResourceActionBlocked()) {
+    document.querySelectorAll("[data-hatch], [data-star], [data-active], [data-soul-essence], [data-soul-blessing], [data-awaken], [data-ultimate]").forEach((button) => { button.disabled = true; });
+  }
+  if (["saving", "uncertain"].includes(cloudPetActionState.phase)) {
+    document.querySelectorAll("[data-draw], [data-draw-ten]").forEach((button) => { button.disabled = true; });
+  }
+}
+
+async function confirmPendingPetAction() {
+  if (cloudPetActionState.phase !== "uncertain") return false;
+  const attempt = cloudPetActionAttempt;
+  const confirmedBeforeRead = Boolean(attempt?.settled && attempt.definitive);
+  // A read begun before the original write completed cannot resolve that write.
+  let synced = false;
+  try {
+    if (confirmedBeforeRead && cloudPlayerSyncInFlight) await cloudPlayerSyncInFlight;
+    synced = await loadCloudPlayerState();
+  } catch {
+    // An unavailable read must keep an uncertain operation locked.
+  }
+  if (cloudPetActionAttempt !== attempt) return false;
+  if (synced && confirmedBeforeRead) attempt.reconciled = true;
+  if (attempt?.reconciled) cloudPetActionState = { phase: "idle", message: "原操作已確認，最新資源已同步。" };
+  else cloudPetActionState = { phase: "uncertain", message: "已查詢資源，但原操作結果仍待確認；暫不重新送出。" };
+  render();
+  return Boolean(attempt?.reconciled);
 }
 
 function rollRarity(odds) {
@@ -7134,14 +7289,20 @@ function starLevelRequirement(nextStar) {
   return Math.max(2, Math.min(5, rewardCount(nextStar || 2)));
 }
 
+function starUpgradeStatus(pet, owned = pet ? getOwned(pet.pet_id) : null) {
+  const nextStar = owned ? Number(owned.star || 1) + 1 : 2;
+  const cost = starCost(nextStar);
+  const soulGap = Math.max(0, cost - rewardCount(owned?.duplicate_fragments));
+  const levelGap = Math.max(0, starLevelRequirement(nextStar) - rewardCount(owned?.level));
+  return { nextStar, cost, soulGap, levelGap, ready: Boolean(pet && owned && owned.star < 5 && soulGap === 0 && levelGap === 0 && !petResourceActionBlocked()) };
+}
+
 async function upgradeStar(petId) {
   const pet = getPet(petId);
   const owned = getOwned(petId);
-  if (!pet || !owned || owned.star >= 5) return;
-  const nextStar = owned.star + 1;
-  const cost = starCost(nextStar);
-  if (rewardCount(owned.level || 1) < starLevelRequirement(nextStar)) return;
-  if (owned.duplicate_fragments < cost) return;
+  const upgrade = starUpgradeStatus(pet, owned);
+  if (!upgrade.ready) return;
+  const { nextStar, cost } = upgrade;
   if (CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock") {
     await runCloudPetAction("upgrade_star", petId);
     return;
@@ -7167,6 +7328,7 @@ function recordPetResourceHistory(text) {
 }
 
 async function convertStarSoulToEssence(petId) {
+  if (petResourceActionBlocked()) return;
   const pet = getPet(petId);
   const owned = getOwned(petId);
   if (!pet || !owned || owned.star < 5 || rewardCount(owned.duplicate_fragments) < 1) return;
@@ -7182,6 +7344,7 @@ async function convertStarSoulToEssence(petId) {
 }
 
 async function convertStarSoulToTempleBlessing(petId) {
+  if (petResourceActionBlocked()) return;
   const pet = getPet(petId);
   const owned = getOwned(petId);
   if (!pet || !owned || owned.star < 5 || !isContractTempleStoryline(pet.storyline_id)) return;
@@ -7199,11 +7362,35 @@ async function convertStarSoulToTempleBlessing(petId) {
 }
 
 function canAwaken(pet, owned) {
+  if (cloudAwakeningUnavailable() || playerCloudSyncPending()) return false;
   if (!owned || owned.star < 5 || owned.awakened || !pet.available_forms.includes("覺醒型")) return false;
   return hasMaterials(pet.required_awaken_materials);
 }
 
+function cloudWorkGrowthUnavailable() {
+  return Boolean(CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock");
+}
+
+function cloudAwakeningUnavailable() {
+  return Boolean(CLOUD_API_BASE_URL && CLOUD_API_BASE_URL !== "mock");
+}
+
+function awakeningPreparationMarkup(pet, owned) {
+  if (!owned || !pet.available_forms?.includes("覺醒型")) return "";
+  if (owned.awakened) return '<p class="awakening-preparation">已覺醒，進度已保留。</p>';
+  const ready = owned.star >= 5 && hasMaterials(pet.required_awaken_materials);
+  const title = cloudAwakeningUnavailable()
+    ? ready ? "條件已足，正式覺醒尚未開放" : "覺醒準備（正式功能尚未開放）"
+    : ready ? "覺醒條件已足" : "覺醒準備";
+  const materials = Object.entries(pet.required_awaken_materials || {}).map(([key, count]) =>
+    `${materialLabel(key)} ${Number(state.materials?.[key] || 0)}/${count}`);
+  return `<div class="awakening-preparation"><strong>${escapeHtml(title)}</strong>
+    <p>${escapeHtml([`星級 ${owned.star || 1}/5`, ...materials].join(" · "))}</p>
+    ${cloudAwakeningUnavailable() ? "<small>素材會保留，現在不會扣除。</small>" : ""}</div>`;
+}
+
 function awakenPet(petId) {
+  if (cloudAwakeningUnavailable() || playerCloudSyncPending()) return false;
   const pet = getPet(petId);
   const owned = getOwned(petId);
   if (!pet || !canAwaken(pet, owned)) return;
@@ -7267,6 +7454,7 @@ function render() {
   renderTeam();
   renderCardGameBoard();
   renderManagerDashboard();
+  renderPetActionStatus();
 }
 
 function renderShellMode() {
@@ -7422,7 +7610,7 @@ function renderActivePet() {
       <span class="rarity-badge rarity-${pet.rarity}">${pet.rarity}</span>
       <span class="soft-pill">${currentForm(pet, owned)}</span>
     </div>
-    <p class="small-text">今天行程養等級，今天成果推覺醒。</p>
+    <p class="small-text">${cloudWorkGrowthUnavailable() ? "工作經驗尚未開放，既有等級保留；覺醒仍在準備中。" : "今天行程養等級，今天成果推覺醒。"}</p>
     <div class="stat-line">
       <div class="team-topline"><span>Lv.${owned?.level || 1}</span><span>${owned?.exp || 0}/${expMax}</span></div>
       <div class="bar"><span style="width:${expPercent}%"></span></div>
@@ -7460,7 +7648,9 @@ function renderEntrySummon() {
   const progress = state.progress || buildProgressSnapshot(state.metrics);
   const priority = buildHomePriorityCard();
   summon.innerHTML = `
+    ${buildCollectionTargetMarkup()}
     ${buildHomeHeroPanel(sourceMetrics, progress.period, priority)}
+    ${buildRecentSettlementMarkup()}
     ${buildHomeFunctionDock()}
     ${buildHomeMonthResetCard(sourceMetrics, progress.period)}
     ${buildHomeTodayChangeStrip(sourceMetrics)}
@@ -7503,7 +7693,7 @@ function renderProgressDashboard() {
     gap: Math.max(0, normalizeMetricValue(4 - (progress.main?.total || 0))),
     done: (progress.main?.total || 0) >= 4,
   };
-  const allScheduleMilestone = fourPlus.done
+  const allScheduleMilestone = fourPlus.available === false ? "日均資料不足，等待有效天數或日均資料" : fourPlus.done
     ? `全部行程日均已達 ${formatMetricValue(fourPlus.target)}${fourPlus.extra > 0 ? `，多出 ${formatMetricValue(fourPlus.extra)}` : ""}`
     : `全部行程日均 ${formatMetricValue(fourPlus.current)}/${formatMetricValue(fourPlus.target)}，還差 ${formatMetricValue(fourPlus.gap || 0)}`;
   const fourPercent = progressPercent(fourPlus.current, fourPlus.target);
@@ -7531,8 +7721,8 @@ function renderProgressDashboard() {
   const growthFocus = buildGrowthFocus(pet, owned);
   const awakenFocus = buildAwakenFocus(pet, owned);
   const drawFocus = {
-    title: "抽卡刺激",
-    detail: totalTickets() > 0 ? `${compactTicketText()}，先把今天能抽的抽掉。` : "目前沒有可抽券，完成行程或成果後會亮起卡池。",
+    title: "可用抽卡",
+    detail: totalTickets() > 0 ? `${compactTicketText()}，有空時再探索夥伴。` : "目前沒有可抽券，新資料結算後會更新卡池。",
     value: `${totalTickets()} 次`,
     tone: totalTickets() > 0 ? "hot" : "soft",
   };
@@ -7540,7 +7730,7 @@ function renderProgressDashboard() {
   target.innerHTML = `
     <article class="progress-hero-card">
       <span class="summon-kicker">本月日均行程：有效 / 全部</span>
-      <strong>${formatMetricValue(fourPlus.effectiveCurrent || 0)} / ${formatMetricValue(fourPlus.current)}</strong>
+      <strong>${fourPlus.effectiveAvailable === false ? "資料不足" : formatMetricValue(fourPlus.effectiveCurrent || 0)} / ${fourPlus.available === false ? "資料不足" : formatMetricValue(fourPlus.current)}</strong>
       <p>這是原報表的有效 / 全部日均。第一版以右側全部行程作為主要進度，有效行程先保留參考。</p>
       <span class="soft-pill">${escapeHtml(allScheduleMilestone)}</span>
     </article>
@@ -7556,10 +7746,10 @@ function renderProgressDashboard() {
       `).join("")}
     </div>
     <article class="progress-card">
-      <div class="team-topline"><strong>日均行程（全部）</strong><span>${formatMetricValue(fourPlus.current)} / ${formatMetricValue(fourPlus.target)}${fourPlus.extra > 0 ? ` + ${formatMetricValue(fourPlus.extra)}` : ""}</span></div>
+      <div class="team-topline"><strong>日均行程（全部）</strong><span>${fourPlus.available === false ? "資料不足" : formatMetricValue(fourPlus.current)} / ${formatMetricValue(fourPlus.target)}${fourPlus.extra > 0 ? ` + ${formatMetricValue(fourPlus.extra)}` : ""}</span></div>
       <div class="bar"><span style="width:${fourPercent}%"></span></div>
-      <p>${fourPlus.done ? "本月全部行程日均已達 4；超過的部分可作為後續加碼空間。" : `本月全部行程日均目標為 4，目前還差 ${formatMetricValue(fourPlus.gap || 0)}。`}</p>
-      <p class="small-text">原報表有效 / 全部日均：${formatMetricValue(fourPlus.effectiveCurrent || 0)} / ${formatMetricValue(fourPlus.current)}。有效值目前只供參考；等全員全部行程日均穩定達 4，再考慮改為下一階段指標。</p>
+      <p>${fourPlus.available === false ? "收到有效天數或日均資料後，再顯示本月進度。" : fourPlus.done ? "本月全部行程日均已達 4。" : `本月全部行程日均目標為 4，目前還差 ${formatMetricValue(fourPlus.gap || 0)}。`}</p>
+      <p class="small-text">原報表有效 / 全部日均：${fourPlus.effectiveAvailable === false ? "資料不足" : formatMetricValue(fourPlus.effectiveCurrent || 0)} / ${fourPlus.available === false ? "資料不足" : formatMetricValue(fourPlus.current)}。有效值保留參考。</p>
     </article>
     <article class="progress-card">
       <div class="team-topline"><strong>高價值行為（拜訪＋回報＋帶看）</strong><span>${formatMetricValue(progress.highValue.current)} / >${progress.highValue.target}</span></div>
@@ -7598,14 +7788,14 @@ function renderMetrics() {
   const metrics = normalizeGameMetrics(state.progress?.sourceMetrics || state.metrics || {});
   const items = [...SPIRIT_FOOD_ACTIVITY_ITEMS, ...SPIRIT_FOOD_RESULT_ITEMS];
   target.innerHTML = items.map((item) => {
-    const value = foodItemValue(item, metrics);
+    const display = sourceDisplayMetric(item.key, metrics);
     return `
       <article class="metric-tile metric-food-tile">
         <div class="team-topline">
           <span>${escapeHtml(item.label)}</span>
-          <strong>${formatMetricValue(value)}${escapeHtml(item.unit)}</strong>
+          <strong>${escapeHtml(display.text)}${display.known ? escapeHtml(item.unit) : ""}</strong>
         </div>
-        <p>${escapeHtml(foodHintText(item, value))}</p>
+        <p>${escapeHtml(display.negative ? "負值部分遊戲採 0，其他數值依原有規則計算。" : display.known ? foodHintText(item) : "本次來源未提供此欄位。")}</p>
       </article>
     `;
   }).join("");
@@ -7661,6 +7851,10 @@ function renderDailyQuests() {
 }
 
 function renderRewards() {
+  if (CLOUD_API_BASE_URL) {
+    document.getElementById("rewardStrip").innerHTML = "";
+    return;
+  }
   const rewards = state.lastRewards;
   const rewardItems = [
     ["經驗", Number(rewards.exp || 0), "+"],
@@ -7688,6 +7882,7 @@ function renderRewards() {
 }
 
 function todayAchievements() {
+  if (CLOUD_API_BASE_URL) return [];
   const settlement = state.dailySettlements?.[todayKey()];
   if (!settlement?.awarded) return [];
   if (Array.isArray(settlement.achievements)) return settlement.achievements;
@@ -7722,6 +7917,12 @@ function renderRewardAction() {
   const target = document.getElementById("rewardActionBar");
   if (!target) return;
   const tickets = totalTickets();
+  if (CLOUD_API_BASE_URL) {
+    target.innerHTML = `<div class="reward-action-card"><strong>目前可抽 ${tickets} 次</strong>
+      <div class="reward-action-buttons"><button class="secondary-button" type="button" data-view="gacha">查看可用抽數</button>
+      <button class="secondary-button" type="button" data-view="collection">查看收藏</button></div></div>`;
+    return;
+  }
   const rewards = state.lastRewards;
   const settlement = state.dailySettlements?.[todayKey()] || null;
   const settlementRewards = settlement?.rewards || null;
@@ -7783,7 +7984,7 @@ function buildPoolInlineDrawResult(pool) {
   const outcome = drawOutcomeLabel(drawResult, pet);
   return `
     <section class="pool-inline-result draw-tone-${escapeHtml(tone)}" aria-live="polite">
-      <span class="summon-kicker">剛剛抽到</span>
+      <span class="summon-kicker">${escapeHtml(drawRecordCaption(drawResult))}</span>
       <div class="pool-inline-main">
         <div class="mini-pet">${drawResultVisual(pet, owned, drawResult, "small")}</div>
         <div>
@@ -7810,7 +8011,7 @@ function buildPoolTenDrawResult(batchRevealId, poolKey) {
   return `
     <section class="pool-inline-result pool-ten-result" aria-live="polite">
       <div class="team-topline">
-        <span class="summon-kicker">十連結果</span>
+        <span class="summon-kicker">十連結果 · ${escapeHtml(drawRecordCaption(draws[0]))}</span>
         <strong>精華 ${essenceCount} · 蛋 ${eggCount} · 寵物/星魂 ${petCount}</strong>
       </div>
       <div class="ten-draw-grid">
@@ -7827,7 +8028,7 @@ function buildPoolTenDrawResult(batchRevealId, poolKey) {
           `;
         }).join("")}
       </div>
-      <p>${draws.some((item) => item.pendingSync) ? "結果已揭曉，整批雲端保存中。" : "十連結果已保存。"}</p>
+      <p>${draws.some((item) => item.pendingSync || item.syncError) ? "結果已揭曉，尚有待確認項目。" : "這批十連結果已保存，目前庫存請查看背包。"}</p>
     </section>
   `;
 }
@@ -7980,6 +8181,8 @@ function drawOutcomeTone(draw, pet) {
 }
 
 function drawOutcomeLabel(draw, pet) {
+  if (draw?.syncError) return "結果待確認";
+  if (draw?.pendingSync) return "已揭曉，確認中";
   if (draw?.outcomeKind === "egg") return `${eggLabel(pet)} +1`;
   if (draw?.outcomeKind === "essence") return `${essenceLabelForResource(draw?.essenceKey || draw?.resourceKey, pet)} ×${rewardCount(draw.essenceAmount || draw.resourceAmount || 0)}`;
   if (draw?.outcomeKind === "essence_conversion") return `${essenceLabelForResource(draw?.essenceKey || draw?.resourceKey, pet)} ×${rewardCount(draw.essenceAmount || 5)}`;
@@ -7991,6 +8194,8 @@ function drawOutcomeLabel(draw, pet) {
 }
 
 function drawResultSummaryText(draw, pet) {
+  if (draw?.syncError) return "結果待確認，尚不能視為已入帳；請核對同步狀態。";
+  if (draw?.pendingSync) return "已揭曉，確認中；資源尚未確認入帳。";
   if (draw?.outcomeKind === "egg") {
     const currentEgg = visibleEggCount(draw.eggPetId || pet?.pet_id);
     const essence = visibleEssenceCount(pet?.storyline_id);
@@ -8011,6 +8216,7 @@ function drawResultSummaryText(draw, pet) {
 }
 
 function hatchProgressForDraw(draw, pet) {
+  if (draw?.pendingSync || draw?.syncError) return null;
   if (!pet || !["egg", "essence"].includes(draw?.outcomeKind)) return null;
   const essence = visibleEssenceCount(pet.storyline_id);
   const pendingEssence = pendingPreparedDrawResourceAmount("essences", essenceKeyForStoryline(pet.storyline_id));
@@ -8023,7 +8229,8 @@ function hatchProgressForDraw(draw, pet) {
   const storylineEggs = PETS
     .filter((item) => item.storyline_id === pet.storyline_id && visibleEggCount(item.pet_id) > 0 && !getOwned(item.pet_id))
     .map((item) => ({ pet: item, eggs: visibleEggCount(item.pet_id) }));
-  const target = storylineEggs[0]?.pet || pet;
+  const preferred = getCollectionTarget();
+  const target = storylineEggs.find((item) => item.pet.pet_id === preferred?.pet_id)?.pet || storylineEggs[0]?.pet || pet;
   const hasEgg = storylineEggs.length > 0 || draw.outcomeKind === "egg";
   const title = hasEgg
     ? `${eggLabel(target)}孵化進度`
@@ -8060,6 +8267,7 @@ function drawHatchProgressMarkup(draw, pet) {
 }
 
 function drawFragmentProgressText(draw, pet, owned) {
+  if (draw?.pendingSync || draw?.syncError) return "保存確認後，才會更新可用資源與養成進度。";
   if (!pet) return "";
   if (draw?.outcomeKind === "egg") {
     const essence = visibleEssenceCount(pet.storyline_id);
@@ -8084,16 +8292,20 @@ function drawFragmentProgressText(draw, pet, owned) {
   const cost = starCost(nextStar);
   const current = rewardCount(owned.duplicate_fragments);
   const gap = Math.max(0, cost - current);
+  const upgrade = starUpgradeStatus(pet, owned);
+  if (gap <= 0 && upgrade.levelGap > 0) return `星魂 ${current}/${cost} 已足，還需升到 Lv.${starLevelRequirement(nextStar)} 才能升 ${nextStar} 星。`;
   if (gap <= 0) return `星魂 ${current}/${cost} 已滿，可以把 ${pet.name} 升到 ${nextStar} 星。`;
   if (draw?.duplicate) return `${pet.name}星魂 +${rewardCount(draw.fragmentsAdded)}，目前 ${current}/${cost}，再 ${gap} 個星魂升 ${nextStar} 星。`;
   return `重複寵物會變星魂；${pet.name} 目前 ${current}/${cost}，再 ${gap} 個星魂升 ${nextStar} 星。`;
 }
 
 function drawMomentumCue(action, pet, owned) {
+  if (action?.kind === "pending") return "先等待保存確認，再決定下一步。";
+  if (action?.kind === "target") return "已確認的蛋與精華都足夠，可以查看目標，再決定是否孵化。";
   if (action?.kind === "hatch") return `${pet.name} 的蛋和精華都夠了，先孵化拿到新夥伴。`;
   if (action?.kind === "star") return `星魂已滿，先升星，${pet.name} 的養成會立刻有感。`;
   if (action?.kind === "awaken") return `覺醒條件已到，成果素材可以轉成新的戰力。`;
-  if (action?.kind === "draw") return `還有 ${totalTickets()} 次抽卡，先把手上的券抽完。`;
+  if (action?.kind === "draw") return `目前還有 ${totalTickets()} 次可用抽卡，也可以先看看收藏。`;
   if (action?.kind === "mission") return `抽完先回工作閉環：${buildPilotMission(state.metrics).detail}`;
   const quests = buildDailyQuests(state.metrics);
   const nextQuest = quests
@@ -8115,16 +8327,27 @@ function drawMonthlyPacingText(draw) {
   return `月養成節奏：${goal}`;
 }
 
+function drawRecordCaption(draw) {
+  const at = typeof draw?.at === "string" && draw.at && Number.isFinite(Date.parse(draw.at)) ? new Date(draw.at) : null;
+  return at ? `最近抽卡 · ${at.toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hour12: false })}（台灣）` : "最近抽卡 · 日期未提供";
+}
+
+function taipeiDrawDay(value) {
+  if (!value || !Number.isFinite(Date.parse(value))) return "";
+  return new Date(value).toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" });
+}
+
 function todayDrawBattleText(draw = state.history.find((item) => item.type === "draw")) {
-  const today = todayKey();
-  const draws = (state.history || []).filter((item) => item.type === "draw" && todayKey(new Date(item.at || Date.now())) === today);
+  const today = taipeiDrawDay(new Date().toISOString());
+  const draws = (state.history || []).slice(0, 12).filter((item) => item.type === "draw" && taipeiDrawDay(item.at) === today);
   if (!draws.length) return "";
-  const newCount = draws.filter((item) => item.outcomeKind === "pet" && !item.duplicate && !item.pendingSync).length;
-  const pendingPetCount = draws.filter((item) => item.outcomeKind === "pet" && item.pendingSync).length;
-  const eggCountToday = draws.filter((item) => item.outcomeKind === "egg").length;
+  const confirmed = draws.filter((item) => !item.pendingSync && !item.syncError);
+  const newCount = confirmed.filter((item) => item.outcomeKind === "pet" && !item.duplicate).length;
+  const pendingPetCount = draws.length - confirmed.length;
+  const eggCountToday = confirmed.filter((item) => item.outcomeKind === "egg").length;
   const duplicateCount = draws.filter((item) => item.outcomeKind === "star_soul").length;
-  const fragments = draws.reduce((sum, item) => sum + rewardCount(item.fragmentsAdded || 0), 0);
-  const essences = draws.reduce((sum, item) => sum + rewardCount(item.essenceAmount || 0), 0);
+  const fragments = confirmed.reduce((sum, item) => sum + rewardCount(item.fragmentsAdded || 0), 0);
+  const essences = confirmed.reduce((sum, item) => sum + rewardCount(item.essenceAmount || 0), 0);
   const pet = draw ? getPet(draw.petId) : null;
   const owned = pet ? getOwned(pet.pet_id) : null;
   const nextCost = owned && owned.star < 5 ? starCost(owned.star + 1) : 0;
@@ -8136,7 +8359,7 @@ function todayDrawBattleText(draw = state.history.find((item) => item.type === "
       : pendingPetCount > 0
         ? "完整寵物卡正在雲端確認"
         : "卡片庫已更新";
-  return `今天抽卡戰果：新寵 ${newCount}${pendingPetCount ? `、完整卡待確認 ${pendingPetCount}` : ""}、蛋 ${eggCountToday}、星魂 +${fragments}、精華 +${essences}；${progress}。`;
+  return `此瀏覽器保留的今日紀錄（最多 12 筆）：已確認新寵 ${newCount}、蛋 ${eggCountToday}、星魂 +${fragments}、精華 +${essences}；待確認 ${pendingPetCount} 筆。這是紀錄摘要，目前庫存請查看背包。`;
 }
 
 function drawWorkFollowupText() {
@@ -8145,10 +8368,17 @@ function drawWorkFollowupText() {
 }
 
 function drawNextAction(draw, pet, owned) {
+  if (draw?.pendingSync || draw?.syncError || petResourceActionBlocked()) return { kind: "pending", label: "雲端保存中" };
+  const preferred = getCollectionTarget();
+  const hatchTargets = preferred ? [preferred, ...PETS.filter((item) => item.pet_id !== preferred.pet_id)] : PETS;
+  const hatch = hatchTargets.find((item) => item.storyline_id === pet?.storyline_id && !getOwned(item.pet_id) && canHatchPet(item.pet_id));
+  if (hatch && ["egg", "essence"].includes(draw?.outcomeKind)) {
+    return { kind: "target", label: `查看${hatch.name}孵化`, petId: hatch.pet_id };
+  }
   if (draw?.outcomeKind === "egg" && pet && canHatchPet(pet.pet_id)) {
     return { kind: "hatch", label: "去孵化", petId: pet.pet_id };
   }
-  if (draw?.duplicate && owned && owned.star < 5 && owned.duplicate_fragments >= starCost(owned.star + 1)) {
+  if (draw?.duplicate && starUpgradeStatus(pet, owned).ready) {
     return { kind: "star", label: "去升星", petId: pet.pet_id };
   }
   if (pet && owned && canAwaken(pet, owned)) return { kind: "awaken", label: "去覺醒", petId: pet.pet_id };
@@ -8161,6 +8391,8 @@ function drawNextAction(draw, pet, owned) {
 
 function drawNextActionMarkup(action) {
   if (!action) return "";
+  if (action.kind === "pending") return `<button class="secondary-button" type="button" disabled>${escapeHtml(action.label)}</button>`;
+  if (action.kind === "target") return `<button class="primary-button" type="button" data-focus-collection="${escapeHtml(action.petId)}">${escapeHtml(action.label)}</button>`;
   if (action.kind === "hatch") return `<button class="primary-button" type="button" data-hatch="${escapeHtml(action.petId)}">${escapeHtml(action.label)}</button>`;
   if (action.kind === "star") return `<button class="primary-button" type="button" data-star="${escapeHtml(action.petId)}">${escapeHtml(action.label)}</button>`;
   if (action.kind === "awaken") return `<button class="primary-button" type="button" data-awaken="${escapeHtml(action.petId)}">${escapeHtml(action.label)}</button>`;
@@ -8196,14 +8428,14 @@ function renderDrawResult() {
     <article class="draw-result-card draw-tone-${escapeHtml(tone)}">
       <div class="mini-pet">${drawResultVisual(pet, getOwned(pet.pet_id), lastDraw, "small")}</div>
       <div>
-        <span class="summon-kicker">抽卡結果</span>
+        <span class="summon-kicker">抽卡結果 · ${escapeHtml(drawRecordCaption(lastDraw))}</span>
         <div class="pet-name-row">
           <h3>${escapeHtml(drawPrimaryLabel(lastDraw, pet))}</h3>
           ${isEssenceDraw(lastDraw) ? "" : `<span class="rarity-badge rarity-${pet.rarity}">${pet.rarity}</span>`}
           <span class="collection-badge is-ready">${escapeHtml(drawOutcomeLabel(lastDraw, pet))}</span>
         </div>
         ${flavor ? `<p class="pet-flavor">「${escapeHtml(flavor)}」</p>` : ""}
-        <p class="small-text">${lastDraw.text}</p>
+        <p class="small-text">${escapeHtml(lastDraw.pendingSync || lastDraw.syncError ? "已揭曉的結果正在確認，未計入可用資源。" : lastDraw.text)}</p>
         ${resultSummary ? `<p class="draw-result-summary">${escapeHtml(resultSummary)}</p>` : ""}
         ${fragmentProgress ? `<p class="draw-fragment-line">${escapeHtml(fragmentProgress)}</p>` : ""}
         ${hatchProgress}
@@ -8231,6 +8463,7 @@ function petFlavorText(pet) {
 
 function buildDrawShareText(draw = state.history.find((item) => item.type === "draw")) {
   if (!draw) return "";
+  if (draw.pendingSync || draw.syncError) return `${PROFILE.branch} ${PROFILE.agent} 的抽卡結果已揭曉，仍待雲端確認。`;
   const pet = getPet(draw.petId);
   const petText = isEssenceDraw(draw)
     ? drawPrimaryLabel(draw, pet)
@@ -8417,7 +8650,7 @@ async function shareTeamContribution() {
 
 function renderCollectionSummary() {
   const ownedCount = ownedCurrentPetCount();
-  document.getElementById("collectionSummary").textContent = `${ownedCount}/${PETS.length}`;
+  document.getElementById("collectionSummary").textContent = `已收藏 ${ownedCount}/${PETS.length} 種`;
 }
 
 function ticketLabel(key) {
@@ -8585,13 +8818,83 @@ function renderStorylineFilter() {
   }).join("");
 }
 
+function collectionTargetStorageKey(userKey = PROFILE.userKey) {
+  return `${LEGACY_STORAGE_KEY}:${stableProfileKey(userKey)}:collection-target-v1`;
+}
+
+function getCollectionTarget() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(collectionTargetStorageKey()) || "null");
+    return PETS.find((pet) => pet.pet_id === saved?.petId) || null;
+  } catch {
+    return null;
+  }
+}
+
+function setCollectionTarget(petId) {
+  if (playerCloudSyncPending()) return false;
+  const pet = PETS.find((item) => item.pet_id === petId);
+  if (petId && !pet) return false;
+  try {
+    if (pet) localStorage.setItem(collectionTargetStorageKey(), JSON.stringify({ petId: pet.pet_id }));
+    else localStorage.removeItem(collectionTargetStorageKey());
+  } catch {
+    setBackupStatus("這台瀏覽器無法保存收藏目標，請稍後再試。", "bad");
+    return false;
+  }
+  renderEntrySummon();
+  renderCollection();
+  return true;
+}
+
+function buildCollectionTargetMarkup() {
+  if (playerCloudSyncPending()) return "";
+  const pet = getCollectionTarget();
+  if (!pet) return `<section class="collection-target" aria-label="收藏目標">
+    <div><strong>下一位想遇見的夥伴</strong><p>選一隻喜歡的精靈，照自己的步調收藏。</p></div>
+    <button class="secondary-button" type="button" data-view="collection">挑選收藏目標</button>
+  </section>`;
+  const owned = getOwned(pet.pet_id);
+  const relatedPool = POOLS.find((pool) => pool.key !== "general" && poolCandidates(pool).some((candidate) => candidate.pet_id === pet.pet_id));
+  const guarantee = relatedPool ? integratedGuaranteeForPool(relatedPool.key) : null;
+  const guaranteedCount = guarantee ? rewardCount(state.guaranteedDraws?.[guarantee.key]) : 0;
+  const guaranteeReady = Boolean(guaranteedCount && canStartDraw(guarantee.poolKey));
+  const ordinaryCount = relatedPool ? rewardCount(state.tickets?.[relatedPool.key]) : 0;
+  const freeCount = rewardCount(state.tickets?.general);
+  const resourceParts = [];
+  if (guaranteedCount) resourceParts.push(`${guarantee.name} ${guaranteedCount} 次${guaranteeReady ? "" : "（順序準備中）"}`);
+  if (ordinaryCount) resourceParts.push(`${relatedPool.name}一般券 ${ordinaryCount} 張`);
+  if (freeCount) resourceParts.push(`免費池 ${freeCount} 抽`);
+  const resourceText = resourceParts.length ? resourceParts.join(" · ") : "目前資源已保存；此目標相關卡池與免費池暫無可用抽數。";
+  const hasNextTarget = PETS.some((candidate) => !getOwned(candidate.pet_id));
+  const imageUrl = normalizePetAssetUrl(pet.thumbnail_url || pet.image_url);
+  return `<section class="collection-target ${owned ? "is-complete" : ""}" aria-label="收藏目標">
+    <div class="collection-target-visual">${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(pet.name)}" width="76" height="86" loading="lazy">` : petVisual(pet, owned, "small")}</div>
+    <div class="collection-target-copy"><span>${owned ? "收藏目標已達成" : "我的收藏目標"}</span>
+      <strong>${escapeHtml(pet.name)}</strong>
+      <p>${escapeHtml(owned ? hasNextTarget ? "夥伴已加入收藏。保留牠，或挑選下一位想遇見的夥伴。" : "目前所有種類都已收藏，可以保留這位夥伴並查看養成條件。" : collectionWorkCue(pet, owned))}</p>
+      ${!owned ? `<p class="collection-target-resources">${escapeHtml(resourceText)}</p>` : ""}
+      <small>目標只保存在此瀏覽器，不改變掉落率；${!owned && guaranteedCount ? "保證抽為同故事線隨機完整卡，不保證指定寵物。" : "保證完整卡不代表指定寵物。"}</small>
+    </div>
+    <div class="collection-target-actions">
+      ${owned && hasNextTarget ? '<button class="primary-button" type="button" data-pick-collection-target="1">挑下一位</button>' : ""}
+      ${!owned && guaranteedCount ? `<button class="primary-button" type="button" data-target-guarantee="${escapeHtml(guarantee.poolKey)}">查看${escapeHtml(guarantee.name)}（${guaranteedCount}）</button>` : ""}
+      <button class="secondary-button" type="button" data-focus-collection="${escapeHtml(pet.pet_id)}">${owned ? "保留這位，看養成" : canHatchPet(pet.pet_id) ? "查看孵化" : "查看目標"}</button>
+      ${!owned && relatedPool ? `<button class="secondary-button" type="button" data-target-pool="${relatedPool.key}">查看${escapeHtml(relatedPool.name)}</button>` : ""}
+      ${!owned && freeCount ? '<button class="secondary-button" type="button" data-target-pool="general">查看免費池</button>' : ""}
+      ${!owned && !resourceParts.length ? '<button class="secondary-button" type="button" data-view="bag">查看背包</button>' : ""}
+      <button class="text-button" type="button" data-clear-collection-target="1">取消目標</button>
+    </div>
+  </section>`;
+}
+
 function renderCollectionActionStrip() {
   const target = document.getElementById("collectionActionStrip");
   if (!target) return;
   const action = findFirstActionableCollection();
   const ownedCount = ownedCurrentPetCount();
   if (!action) {
-    target.innerHTML = `
+    target.innerHTML = `${buildCollectionTargetMarkup()}
       <article class="collection-action-card">
         <span class="summon-kicker">卡片庫下一步</span>
         <strong>${ownedCount ? "先累積蛋、精華與星魂" : "先抽到第一批夥伴"}</strong>
@@ -8600,11 +8903,11 @@ function renderCollectionActionStrip() {
     `;
     return;
   }
-  target.innerHTML = `
+  target.innerHTML = `${buildCollectionTargetMarkup()}
     <article class="collection-action-card is-hot">
       <span class="summon-kicker">卡片庫下一步</span>
       <strong>${escapeHtml(action.text)}</strong>
-      <p>目前最值得先處理的是 ${escapeHtml(action.pet.name)}，處理完再回來抽卡或看成果。</p>
+      <p>${escapeHtml(action.pet.name)} 已有可用資源，也可以選擇其他收藏目標。</p>
       <button class="primary-button" type="button" data-${action.type === "hatch" ? "hatch" : action.type === "star" ? "star" : action.type === "awaken" ? "awaken" : action.type === "ultimate" ? "ultimate" : "view"}="${escapeHtml(action.type === "material-ready" ? "collection" : action.pet.pet_id)}">${escapeHtml(action.label)}</button>
     </article>
   `;
@@ -8621,7 +8924,7 @@ function collectionActionState(pet, owned = getOwned(pet.pet_id)) {
     return { badges, score: (hatchReady ? 105 : 0) + (eggs ? 40 : 0) + Math.min(9, essence) };
   }
   const nextCost = owned.star < 5 ? starCost(owned.star + 1) : 0;
-  const canStar = owned.star < 5 && owned.level >= starLevelRequirement(owned.star + 1) && owned.duplicate_fragments >= nextCost;
+  const canStar = starUpgradeStatus(pet, owned).ready;
   const duplicateHatchReady = canHatchPet(pet.pet_id);
   const awakenReady = canAwaken(pet, owned);
   const materialReady = !owned.awakened &&
@@ -8661,15 +8964,17 @@ function collectionWorkCue(pet, owned = getOwned(pet.pet_id)) {
   if (!owned) {
     const eggs = eggCount(pet.pet_id);
     const essence = essenceCount(pet.storyline_id);
-    if (!eggs) return `抽到${eggLabel(pet)}後，再集 ${HATCH_ESSENCE_COST} 個${essenceLabelForStoryline(pet.storyline_id)}就能孵化。`;
     const gap = Math.max(0, HATCH_ESSENCE_COST - essence);
-    return gap <= 0
-      ? `${eggLabel(pet)}與${essenceLabelForStoryline(pet.storyline_id)}都足夠，現在可孵化。`
-      : `${eggLabel(pet)}已入袋，還差 ${gap} 個${essenceLabelForStoryline(pet.storyline_id)}可孵化。`;
+    const resource = `${essenceLabelForStoryline(pet.storyline_id)} ${essence}/${HATCH_ESSENCE_COST}`;
+    if (!eggs) return gap > 0 ? `${resource}，還差 ${gap} 個；尚缺${eggLabel(pet)}。` : `${resource}，精華已足，等待${eggLabel(pet)}。`;
+    return gap <= 0 ? `${eggLabel(pet)}已取得；${resource}，可以選擇孵化。`
+      : `${eggLabel(pet)}已取得；${resource}，還差 ${gap} 個精華可孵化。`;
   }
   const nextCost = owned.star < 5 ? starCost(owned.star + 1) : 0;
   if (owned.star < 5 && owned.duplicate_fragments >= nextCost && owned.level < starLevelRequirement(owned.star + 1)) {
-    return `星魂已滿，再訓練到 Lv.${starLevelRequirement(owned.star + 1)} 可升 ${owned.star + 1} 星。`;
+    return cloudWorkGrowthUnavailable()
+      ? `星魂已足，升 ${owned.star + 1} 星仍需 Lv.${starLevelRequirement(owned.star + 1)}；工作經驗尚未開放。`
+      : `星魂已滿，再訓練到 Lv.${starLevelRequirement(owned.star + 1)} 可升 ${owned.star + 1} 星。`;
   }
   if (owned.star < 5 && owned.duplicate_fragments >= nextCost) return `星魂已滿，先升星，${pet.name} 馬上變強。`;
   if (canAwaken(pet, owned)) return `成果素材已到位，先覺醒，讓成果變成戰力。`;
@@ -8683,7 +8988,7 @@ function collectionWorkCue(pet, owned = getOwned(pet.pet_id)) {
   }
   if (owned.star >= 5) return `${pet.name} 已達 5 星；額外星魂可在背包換同線精華，究極功能尚未開放。`;
   if (quest) return `${quest.message}，回本月累積補完再回來養牠。`;
-  return "今天行程養等級，成果素材推覺醒。";
+  return cloudWorkGrowthUnavailable() ? "工作經驗尚未開放，既有收藏與素材保留。" : "今天行程養等級，成果素材推覺醒。";
 }
 
 function renderCollectionBadges(badges) {
@@ -8711,7 +9016,7 @@ function renderCollection() {
     const nextCost = owned && owned.star < 5 ? starCost(owned.star + 1) : 0;
     const flavor = petFlavorText(pet);
     return `
-      <article class="pet-card ${locked ? "is-locked" : ""}">
+      <article class="pet-card ${locked ? "is-locked" : ""} ${getCollectionTarget()?.pet_id === pet.pet_id ? "is-collection-target" : ""}" data-collection-pet="${pet.pet_id}" tabindex="-1">
         <div class="mini-pet">${petCollectionVisual(pet, owned, "small")}</div>
         <div class="pet-name-row">
           <h3>${pet.name}</h3>
@@ -8720,18 +9025,21 @@ function renderCollection() {
         ${renderCollectionBadges(action.badges)}
         <p class="small-text">${locked ? `${eggCount(pet.pet_id) ? `${eggLabel(pet)} ${eggCount(pet.pet_id)} · ${essenceLabelForStoryline(pet.storyline_id)} ${essenceCount(pet.storyline_id)}/${HATCH_ESSENCE_COST}` : "尚未取得"}` : `${currentForm(pet, owned)} · Lv.${owned.level} · ${owned.star}星 · 星魂 ${owned.duplicate_fragments}`}</p>
         <p class="collection-work-cue">${escapeHtml(collectionWorkCue(pet, owned))}</p>
+        ${awakeningPreparationMarkup(pet, owned)}
         ${flavor ? `<p class="pet-flavor">「${escapeHtml(flavor)}」</p>` : ""}
         <p class="small-text">${escapeHtml(pet.card_effect_summary || "")}</p>
         <div class="pet-card-actions">
+          <button class="secondary-button" type="button" data-collection-target="${pet.pet_id}" aria-pressed="${getCollectionTarget()?.pet_id === pet.pet_id}">${getCollectionTarget()?.pet_id === pet.pet_id ? "已設為收藏目標" : "設為收藏目標"}</button>
           <button class="secondary-button" type="button" data-active="${pet.pet_id}" ${locked ? "disabled" : ""}>設為夥伴</button>
           <button class="secondary-button" type="button" data-hatch="${pet.pet_id}" ${canHatchPet(pet.pet_id) ? "" : "disabled"}>孵化</button>
-          <button class="secondary-button" type="button" data-star="${pet.pet_id}" ${!owned || owned.star >= 5 || owned.level < starLevelRequirement(owned.star + 1) || owned.duplicate_fragments < nextCost ? "disabled" : ""}>升星 ${nextCost ? `-${nextCost}星魂` : ""}</button>
-          <button class="secondary-button" type="button" data-awaken="${pet.pet_id}" ${canAwaken(pet, owned) ? "" : "disabled"}>覺醒</button>
+          <button class="secondary-button" type="button" data-star="${pet.pet_id}" ${starUpgradeStatus(pet, owned).ready ? "" : "disabled"}>升星 ${nextCost ? `-${nextCost}星魂` : ""}</button>
+          <button class="secondary-button" type="button" data-awaken="${pet.pet_id}" ${canAwaken(pet, owned) ? "" : "disabled"}>${cloudAwakeningUnavailable() ? "覺醒尚未開放" : "覺醒"}</button>
           <button class="secondary-button" type="button" data-ultimate="${pet.pet_id}" ${canUltimate(pet, owned) ? "" : "disabled"}>${ULTIMATE_FEATURE_ENABLED ? "究極合成" : "究極未開放"}</button>
         </div>
       </article>
     `;
   }).join("");
+  renderPetActionStatus();
 }
 
 function renderTeam() {
@@ -9192,6 +9500,17 @@ function renderManagerImportSource() {
 }
 
 function renderManagerResetTools() {
+  const testLink = document.getElementById("managerTestPlayerLink");
+  const testPlayer = state.manager.cloudDashboard?.manager_test_player;
+  if (testLink) {
+    testLink.hidden = !MANAGER_MODE || !testPlayer?.uid;
+    if (!testLink.hidden) {
+      const url = new URL(window.location.pathname, window.location.origin);
+      url.searchParams.set("uid", String(testPlayer.uid));
+      if (CLOUD_API_BASE_URL) url.searchParams.set("api", CLOUD_API_BASE_URL);
+      testLink.href = url.href;
+    } else testLink.removeAttribute("href");
+  }
   const managerButton = document.getElementById("managerResetManagerBtn");
   const allButton = document.getElementById("managerResetAllBtn");
   const status = document.getElementById("managerResetStatus");
@@ -9224,7 +9543,7 @@ async function managerResetTestData(scope = "manager") {
 
   const targetText = scope === "all_players"
     ? "全部玩家（含店長與秘書）"
-    : "店長測試帳號 293127";
+    : "店長測試帳號";
   const confirmed = typeof window !== "object" || typeof window.confirm !== "function" || window.confirm(
     `確定重置${targetText}的遊戲進度？卡片、寵物、星魂、素材、抽卡紀錄、免費抽與加碼會清空；所有累積數據都保留。`,
   );
@@ -9323,7 +9642,7 @@ async function saveManagerTestMetrics(form) {
     const data = cloudEnvelopeData(envelope, "managerTestMetrics");
     if (!data) throw new Error(envelope?.errors?.[0]?.message || "managerTestMetrics response missing data");
     await loadCloudState();
-    state.manager.testMetricsStatus = `已套用到店長帳號 293127；本月行程 ${formatMetricValue(payload.area + payload.development + payload.negotiation + payload.showing)}，業績 ${formatMetricValue(payload.performance)}。`;
+    state.manager.testMetricsStatus = `已套用到店長帳號；本月行程 ${formatMetricValue(payload.area + payload.development + payload.negotiation + payload.showing)}，業績 ${formatMetricValue(payload.performance)}。`;
     state.manager.testMetricsTone = "good";
     return true;
   } catch (error) {
@@ -9772,6 +10091,70 @@ document.addEventListener("click", (event) => {
   const mutatesPlayerState = ["draw", "drawTen", "active", "star", "hatch", "soulEssence", "soulBlessing", "awaken", "ultimate"]
     .some((key) => Object.prototype.hasOwnProperty.call(target.dataset, key));
   if (playerCloudSyncPending() && mutatesPlayerState) return;
+  if (["saving", "uncertain"].includes(cloudPetActionState.phase) && mutatesPlayerState) return;
+  if (target.dataset.petActionSync) {
+    confirmPendingPetAction();
+    return;
+  }
+  if (target.dataset.workRecords) {
+    switchToView("today", { scroll: false });
+    document.querySelector(".home-metrics-strip")?.scrollIntoView({ block: "start", behavior: "smooth" });
+    return;
+  }
+  if (target.dataset.targetPool) {
+    const pool = POOLS.find((item) => item.key === target.dataset.targetPool);
+    if (!pool || playerCloudSyncPending()) return;
+    pinnedDrawPoolKey = pool.key;
+    switchToView("gacha", { scroll: false });
+    renderPools();
+    document.querySelector(`[data-pool-card="${pool.key}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    return;
+  }
+  if (target.dataset.targetGuarantee) {
+    const guarantee = guaranteedPoolConfig(target.dataset.targetGuarantee);
+    if (!guarantee || playerCloudSyncPending()) return;
+    const poolKey = displayPoolKey(guarantee.poolKey);
+    pinnedDrawPoolKey = poolKey;
+    switchToView("gacha", { scroll: false });
+    renderPools();
+    const card = document.querySelector(`[data-pool-card="${poolKey}"]`);
+    const button = card?.querySelector(`[data-draw="${guarantee.poolKey}"]`);
+    (button || card)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    button?.focus({ preventScroll: true });
+    return;
+  }
+  if (target.dataset.pickCollectionTarget) {
+    if (playerCloudSyncPending()) return;
+    const current = getCollectionTarget();
+    const available = PETS.filter((pet) => !getOwned(pet.pet_id));
+    const next = available.find((pet) => pet.storyline_id === current?.storyline_id) || available[0];
+    if (!next) return;
+    activeCollectionStorylineId = next.storyline_id;
+    switchToView("collection", { scroll: false });
+    const card = document.querySelector(`[data-collection-pet="${next.pet_id}"]`);
+    card?.scrollIntoView({ block: "center", behavior: "smooth" });
+    card?.querySelector("[data-collection-target]")?.focus({ preventScroll: true });
+    return;
+  }
+  if (target.dataset.collectionTarget) {
+    setCollectionTarget(target.dataset.collectionTarget);
+    return;
+  }
+  if (target.dataset.clearCollectionTarget) {
+    setCollectionTarget("");
+    return;
+  }
+  if (target.dataset.focusCollection) {
+    if (playerCloudSyncPending()) return;
+    const pet = PETS.find((item) => item.pet_id === target.dataset.focusCollection);
+    if (!pet) return;
+    activeCollectionStorylineId = pet.storyline_id;
+    switchToView("collection", { scroll: false });
+    const card = document.querySelector(`[data-collection-pet="${pet.pet_id}"]`);
+    card?.scrollIntoView({ block: "center", behavior: "smooth" });
+    card?.focus({ preventScroll: true });
+    return;
+  }
   if (target.dataset.closeDrawReveal) {
     closeDrawRevealOverlay();
     return;

@@ -1,12 +1,13 @@
 const CACHE_PREFIX = "realtor-pet-game";
-const CACHE_NAME = `${CACHE_PREFIX}-v56`;
+const CACHE_NAME = `${CACHE_PREFIX}-v60`;
 const CORE_ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=20260713-trusted-progressive-login-v64",
-  "./app.js?v=20260713-trusted-progressive-login-v64",
+  "./styles.css?v=20260924-leaderboard-v68",
+  "./app.js?v=20260924-leaderboard-v68",
+  "./leaderboard.js?v=20260924-leaderboard-v68",
   "./site.webmanifest",
-  "./pet_content_manifest.json?v=20260713-trusted-progressive-login-v64",
+  "./pet_content_manifest.json?v=20260924-leaderboard-v68",
   "./assets/app-icon.svg",
   "./assets/app-icon-192.png",
   "./assets/app-icon-512.png",
@@ -58,6 +59,7 @@ self.addEventListener("fetch", (event) => {
 
 function isRuntimeFile(pathname) {
   return [
+    "/leaderboard.js",
     "/index.html",
     "/app.js",
     "/styles.css",
@@ -79,8 +81,10 @@ async function networkFirst(request) {
   } catch (error) {
     const cached = await cache.match(request);
     if (cached) return cached;
-    const fallback = await cache.match("./") || await cache.match("./index.html");
-    if (fallback) return fallback;
+    if (request.mode === "navigate") {
+      const fallback = await cache.match("./") || await cache.match("./index.html");
+      if (fallback) return fallback;
+    }
     throw error;
   }
 }
